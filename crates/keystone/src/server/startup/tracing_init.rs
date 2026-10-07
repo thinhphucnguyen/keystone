@@ -13,7 +13,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Tracing subscriber setup: stderr, optional systemd journal, optional
-//! rotating file appender.
+//! rotating file appender, and (with the `otel` feature and `[otel]`
+//! configured) the OpenTelemetry span exporter (ADR 0040).
 
 use std::io;
 
@@ -26,7 +27,66 @@ use tracing_subscriber::{
     prelude::*,
 };
 
-use crate::config::Config;
+#[cfg(feature = "otel")]
+use openstack_keystone_telemetry::SpanLevel;
+use openstack_keystone_telemetry::{OsloMiddlewareTracingConfig, OtelConfig, Resolved, resolve};
+
+/// The running OTLP pipeline; uninhabited when the `otel` feature is off.
+#[cfg(feature = "otel")]
+pub type TelemetryHandle = openstack_keystone_telemetry::TelemetryGuard;
+/// The running OTLP pipeline; uninhabited when the `otel` feature is off.
+#[cfg(not(feature = "otel"))]
+pub type TelemetryHandle = std::convert::Infallible;
+
+/// Everything that must outlive the subscriber.
+pub struct Guards {
+    /// Flushes buffered file log lines when dropped.
+    _file: Option<tracing_appender::non_blocking::WorkerGuard>,
+    /// The OTLP pipeline, when one is exporting.
+    telemetry: Option<TelemetryHandle>,
+    /// The merged `[otel]` / `[oslo_middleware_tracing]` configuration.
+    pub resolved: Option<Resolved>,
+    /// Why the OTLP pipeline could not be started (startup continues
+    /// without it: telemetry never blocks the service).
+    pub telemetry_error: Option<String>,
+}
+
+impl Guards {
+    /// Whether spans and metrics are being exported.
+    pub fn exporting(&self) -> bool {
+        self.telemetry.is_some()
+    }
+
+    /// Flush and stop the exporters. The SDK blocks while it drains its
+    /// queues, so this runs on a blocking thread.
+    pub async fn shutdown(self) {
+        #[cfg(not(feature = "otel"))]
+        let _ = self;
+        #[cfg(feature = "otel")]
+        if let Some(mut telemetry) = self.telemetry {
+            match tokio::task::spawn_blocking(move || telemetry.shutdown()).await {
+                Ok(errors) => {
+                    for err in errors {
+                        tracing::warn!("telemetry: {err}");
+                    }
+                }
+                Err(err) => tracing::warn!("telemetry: shutdown task failed: {err}"),
+            }
+        }
+    }
+}
+
+/// Most verbose span level the OTLP layer admits.
+#[cfg(feature = "otel")]
+fn span_level_filter(level: SpanLevel) -> LevelFilter {
+    match level {
+        SpanLevel::Error => LevelFilter::ERROR,
+        SpanLevel::Warn => LevelFilter::WARN,
+        SpanLevel::Info => LevelFilter::INFO,
+        SpanLevel::Debug => LevelFilter::DEBUG,
+        SpanLevel::Trace => LevelFilter::TRACE,
+    }
+}
 
 /// Shared target-level allow-list for every log sink.
 ///
@@ -54,13 +114,10 @@ fn deps_targets(default: LevelFilter, deps: LevelFilter) -> Targets {
 /// systemd journal writer, and optionally a rotating file appender) based on
 /// CLI verbosity and the loaded config.
 ///
-/// Returns the file-appender's `WorkerGuard`, if file logging is enabled.
-/// The caller must keep this alive for the process lifetime — dropping it
-/// stops buffered log lines from being flushed.
-pub fn init(
-    verbose: u8,
-    cfg: &Config,
-) -> Result<Option<tracing_appender::non_blocking::WorkerGuard>> {
+/// Returns the [`Guards`]. The caller must keep them alive for the process
+/// lifetime — dropping the file guard stops buffered log lines from being
+/// flushed — and call [`Guards::shutdown`] on the way out to flush spans.
+pub fn init(verbose: u8, cfg: &crate::config::LoadedConfig) -> Result<Guards> {
     // `-v`/`-vv` only affect stderr; file and journald levels are driven by
     // `cfg.default.debug`.
     let stderr_default = match verbose {
@@ -82,6 +139,10 @@ pub fn init(
     };
 
     let mut log_layers = Vec::new();
+
+    // Built before the subscriber exists, so a failure here can only be
+    // reported once logging is up (see `Guards::telemetry_error`).
+    let (resolved, telemetry, telemetry_error) = init_telemetry(cfg);
 
     if cfg.default.use_stderr {
         log_layers.push(
@@ -131,12 +192,63 @@ pub fn init(
         );
     }
 
+    #[cfg(feature = "otel")]
+    if let (Some(handle), Some(settings)) = (
+        &telemetry,
+        resolved.as_ref().and_then(|r| r.settings.as_ref()),
+    ) && let Some(layer) = handle.tracing_layer()
+    {
+        // Own filter: only request-level and coarse operation spans leave the
+        // process (see `[otel] span_level`); driver DEBUG spans stay local.
+        log_layers.push(
+            layer
+                .with_filter(deps_targets(
+                    span_level_filter(settings.span_level),
+                    LevelFilter::ERROR,
+                ))
+                .boxed(),
+        );
+    }
+
     tracing_subscriber::registry()
         .with(ErrorLayer::default())
         .with(log_layers)
         .init();
 
-    Ok(guard)
+    Ok(Guards {
+        _file: guard,
+        telemetry,
+        resolved,
+        telemetry_error,
+    })
+}
+
+/// Resolve the telemetry configuration and, if it asks for export and this
+/// build can, start the OTLP pipeline.
+fn init_telemetry(
+    cfg: &crate::config::LoadedConfig,
+) -> (Option<Resolved>, Option<TelemetryHandle>, Option<String>) {
+    let view = cfg.view();
+    let (Some(otel), Some(alias)) = (
+        view.section::<OtelConfig>(),
+        view.section::<OsloMiddlewareTracingConfig>(),
+    ) else {
+        return (None, None, None);
+    };
+    // Validated at load time (`OtelConfig::validate_with`).
+    let resolved = match resolve(otel, alias) {
+        Ok(resolved) => resolved,
+        Err(err) => return (None, None, Some(err.to_string())),
+    };
+
+    #[cfg(feature = "otel")]
+    if let Some(settings) = &resolved.settings {
+        return match openstack_keystone_telemetry::init(settings, env!("CARGO_PKG_VERSION")) {
+            Ok(handle) => (Some(resolved), Some(handle), None),
+            Err(err) => (Some(resolved), None, Some(err.to_string())),
+        };
+    }
+    (Some(resolved), None, None)
 }
 
 /// Build the file-log appender for `[DEFAULT] log_dir`, honoring the

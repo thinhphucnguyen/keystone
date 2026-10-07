@@ -65,6 +65,26 @@ pub enum SamplerKind {
     AlwaysOff,
 }
 
+/// Most verbose span level exported (spans below it are not sent).
+///
+/// Most driver-level `#[instrument]` spans are `debug`, so the default keeps
+/// the export to request-level and coarse operation spans.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum SpanLevel {
+    /// Only `error` spans.
+    Error,
+    /// `warn` and above.
+    Warn,
+    /// `info` and above (default).
+    #[default]
+    Info,
+    /// `debug` and above.
+    Debug,
+    /// Everything.
+    Trace,
+}
+
 /// `[otel]`: native OpenTelemetry configuration.
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct OtelConfig {
@@ -84,7 +104,9 @@ pub struct OtelConfig {
     pub headers: Option<SecretString>,
     /// Exporter timeout in seconds (default 10).
     pub timeout: Option<f64>,
-    /// Skip TLS verification of the endpoint (development only).
+    /// gRPC only, as in `oslo.middleware`: connect without TLS even to an
+    /// `https` endpoint. Ignored for `http/protobuf`, where the URL scheme
+    /// decides. Development only.
     pub insecure: Option<bool>,
     /// `service.name` resource attribute (default `keystone`).
     pub service_name: Option<String>,
@@ -94,6 +116,8 @@ pub struct OtelConfig {
     pub sampler: Option<SamplerKind>,
     /// Sampling ratio in `0.0..=1.0` (default `1.0`).
     pub sampling_rate: Option<f64>,
+    /// Most verbose span level exported (default `info`).
+    pub span_level: Option<SpanLevel>,
     /// Metric export interval in seconds (default 60).
     pub metrics_interval: Option<f64>,
     /// Add `openstack.user_id`, `openstack.project_id` and
@@ -205,7 +229,7 @@ pub struct TelemetrySettings {
     pub headers: Vec<(String, SecretString)>,
     /// Exporter timeout.
     pub timeout: Duration,
-    /// Skip TLS verification.
+    /// Connect over gRPC without TLS (ignored for `http/protobuf`).
     pub insecure: bool,
     /// `service.name`.
     pub service_name: String,
@@ -215,6 +239,8 @@ pub struct TelemetrySettings {
     pub sampler: SamplerKind,
     /// Sampling ratio, `0.0..=1.0`.
     pub sampling_rate: f64,
+    /// Most verbose span level exported.
+    pub span_level: SpanLevel,
     /// Metric export interval.
     pub metrics_interval: Duration,
     /// Add user, project and domain ids to request spans.
@@ -334,6 +360,14 @@ pub fn resolve(
         otel.insecure != alias.insecure,
     );
 
+    if insecure && protocol == OtlpProtocol::HttpProtobuf {
+        warnings.push(
+            "insecure only applies to the grpc protocol; for http/protobuf the endpoint scheme \
+             selects TLS"
+                .to_string(),
+        );
+    }
+
     let timeout = seconds("timeout", otel.timeout.unwrap_or(DEFAULT_TIMEOUT_SECS))?;
     let metrics_interval = seconds(
         "metrics_interval",
@@ -368,6 +402,7 @@ pub fn resolve(
         resource_attributes,
         sampler: otel.sampler.unwrap_or_default(),
         sampling_rate,
+        span_level: otel.span_level.unwrap_or_default(),
         metrics_interval,
         include_user_ids: otel.include_user_ids.unwrap_or(false),
         legacy_http_attributes: otel.legacy_http_attributes.unwrap_or(false),
@@ -445,6 +480,7 @@ mod tests {
         assert_eq!(s.protocol, OtlpProtocol::HttpProtobuf);
         assert_eq!(s.service_name, "keystone");
         assert_eq!(s.sampler, SamplerKind::ParentBasedRatio);
+        assert_eq!(s.span_level, SpanLevel::Info);
         assert_eq!(s.sampling_rate, 1.0);
         assert_eq!(s.timeout, Duration::from_secs(10));
         assert_eq!(s.metrics_interval, Duration::from_secs(60));
@@ -476,8 +512,10 @@ mod tests {
         assert_eq!(s.service_name, "keystone-api");
         assert_eq!(s.sampling_rate, 0.25);
         assert!(s.insecure);
-        assert_eq!(r.warnings.len(), 1);
+        // The alias note, and `insecure` is meaningless for http/protobuf.
+        assert_eq!(r.warnings.len(), 2, "{:?}", r.warnings);
         assert!(r.warnings[0].contains("alias"));
+        assert!(r.warnings[1].starts_with("insecure only applies"));
     }
 
     #[test]
@@ -614,6 +652,30 @@ mod tests {
         )
         .unwrap_err();
         assert!(!err.to_string().contains("hunter2"));
+    }
+
+    #[test]
+    fn insecure_with_http_protobuf_is_flagged_as_ignored() {
+        let r = resolved(r#"{"enabled": true, "insecure": true}"#, "{}");
+        assert!(
+            r.warnings
+                .iter()
+                .any(|w| w.starts_with("insecure only applies"))
+        );
+        let r = resolved(
+            r#"{"enabled": true, "insecure": true, "protocol": "grpc"}"#,
+            "{}",
+        );
+        assert!(r.warnings.is_empty());
+    }
+
+    #[test]
+    fn span_level_is_parsed() {
+        let s = resolved(r#"{"enabled": true, "span_level": "debug"}"#, "{}")
+            .settings
+            .unwrap();
+        assert_eq!(s.span_level, SpanLevel::Debug);
+        assert!(serde_json::from_str::<OtelConfig>(r#"{"span_level": "loud"}"#).is_err());
     }
 
     #[test]

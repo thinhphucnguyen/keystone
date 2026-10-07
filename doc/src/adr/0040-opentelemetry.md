@@ -44,9 +44,19 @@ the shutdown flush. `tracing_init::init` builds it and returns a guard that also
 holds the file-appender `WorkerGuard`; the guard is flushed from the graceful
 shutdown path in the listeners.
 
-Cargo feature `otel` is off by default. With it on, `otlp-http` (HTTP/protobuf)
-is the default transport and `otlp-grpc` (tonic) is optional. With the feature
-off, instrumentation compiles to no-ops so call sites carry no `cfg`.
+Cargo features, all off by default (`keystone` forwards them): `otel` exports
+over OTLP/HTTP (protobuf) and `otlp-grpc` adds the gRPC transport (tonic,
+aws-lc-rs TLS to match the rest of the workspace). Without them the
+configuration is still parsed and validated, and a configuration that asks for
+export logs that this build cannot. The SDK is built on `opentelemetry` and
+`opentelemetry_sdk` 0.33 with `opentelemetry-otlp` using the workspace's
+`reqwest` and `rustls`, so no second HTTP client or crypto provider is added.
+
+The batch span processor and the periodic metric reader run on their own
+threads, with bounded queues that drop on overflow, so export never blocks a
+request. Startup builds the pipeline inside the tokio runtime; the flush runs
+on a blocking task at shutdown. A pipeline that cannot be built is logged and
+the service starts without telemetry.
 
 ### Configuration
 
@@ -54,8 +64,16 @@ A native `[otel]` section, registered through the section registry (ADR 0039):
 `enabled`, `traces_enabled`, `metrics_enabled` (both default to `enabled`),
 `endpoint`, `protocol` (`http/protobuf` or `grpc`), `headers`, `timeout`,
 `insecure`, `service_name` (default `keystone`), `resource_attributes`,
-`sampler`, `sampling_rate`, `metrics_interval` and `include_user_ids`
-(default `false`).
+`sampler`, `sampling_rate`, `span_level`, `metrics_interval`,
+`include_user_ids` (default `false`), `legacy_http_attributes` and
+`response_traceparent`.
+
+`insecure` follows `oslo.middleware`: it applies to gRPC only (connect without
+TLS) and is ignored, with a warning, for HTTP, where the URL scheme decides.
+`span_level` (default `info`) is the most verbose span the exporter receives;
+about two thirds of the `#[instrument]` sites are `debug`, so the default keeps
+driver-level spans local. For HTTP the signal path (`/v1/traces`,
+`/v1/metrics`) is appended to `endpoint`, as `oslo.middleware` does.
 
 `[oslo_middleware_tracing]` is a registered alias section:
 

@@ -29,11 +29,19 @@
 //! build without the feature still rejects a malformed section.
 
 pub mod config;
+#[cfg(feature = "sdk")]
+mod sdk;
 
 pub use config::{
-    OsloMiddlewareTracingConfig, OtelConfig, OtlpProtocol, Resolved, SamplerKind,
+    OsloMiddlewareTracingConfig, OtelConfig, OtlpProtocol, Resolved, SamplerKind, SpanLevel,
     TelemetryConfigError, TelemetrySettings, resolve,
 };
+
+#[cfg(feature = "sdk")]
+pub use sdk::{TelemetryGuard, TelemetryInitError, TelemetryShutdownError, init};
+
+/// Whether this build can export OTLP (the `otel` cargo feature).
+pub const OTLP_COMPILED: bool = cfg!(feature = "sdk");
 
 /// Linkage anchor — see ADR-0018 and ADR-0039. Referenced by the `keystone`
 /// crate's `build.rs`-generated `_ANCHORS` static so the linker keeps the

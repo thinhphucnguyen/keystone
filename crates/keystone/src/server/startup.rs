@@ -73,37 +73,34 @@ pub struct Startup {
 
 /// Report the effective `[otel]` / `[oslo_middleware_tracing]` configuration
 /// (ADR 0040) now that the subscriber is installed: alias notes, conflicts
-/// between the two sections, and whether anything is going to be exported.
-///
-/// The OTLP pipeline itself is not built yet, so a configuration that asks
-/// for it is flagged rather than silently ignored.
-fn log_telemetry_config(cfg: &crate::config::LoadedConfig) {
-    use openstack_keystone_telemetry::{OsloMiddlewareTracingConfig, OtelConfig, resolve};
-
-    let view = cfg.view();
-    let (Some(otel), Some(alias)) = (
-        view.section::<OtelConfig>(),
-        view.section::<OsloMiddlewareTracingConfig>(),
-    ) else {
+/// between the two sections, and whether anything is being exported.
+fn log_telemetry_config(guards: &tracing_init::Guards) {
+    if let Some(err) = &guards.telemetry_error {
+        warn!("telemetry: not exporting: {err}");
+    }
+    let Some(resolved) = &guards.resolved else {
         return;
     };
-    // Validated at load time (`OtelConfig::validate_with`), so this only
-    // fails if the sections were swapped out since.
-    match resolve(otel, alias) {
-        Ok(resolved) => {
-            for warning in &resolved.warnings {
-                warn!("telemetry: {warning}");
-            }
-            if let Some(settings) = &resolved.settings {
-                warn!(
-                    traces = settings.traces_enabled,
-                    metrics = settings.metrics_enabled,
-                    "telemetry is enabled in the configuration but this build does not export \
-                     OTLP yet (ADR 0040); nothing will be exported"
-                );
-            }
-        }
-        Err(err) => warn!("telemetry: invalid configuration: {err}"),
+    for warning in &resolved.warnings {
+        warn!("telemetry: {warning}");
+    }
+    let Some(settings) = &resolved.settings else {
+        return;
+    };
+    if guards.exporting() {
+        info!(
+            traces = settings.traces_enabled,
+            metrics = settings.metrics_enabled,
+            endpoint = %settings.endpoint,
+            protocol = ?settings.protocol,
+            service_name = %settings.service_name,
+            "telemetry: exporting over OTLP"
+        );
+    } else if !openstack_keystone_telemetry::OTLP_COMPILED {
+        warn!(
+            "telemetry is enabled in the configuration but this build has no OTLP support \
+             (build with the `otel` feature); nothing will be exported"
+        );
     }
 }
 
@@ -140,9 +137,9 @@ pub async fn run() -> Result<(), Report> {
 
     // The guard must stay alive for the rest of `run` to flush buffered
     // file-appender logs.
-    let _guard = tracing_init::init(args.verbose, &cfg)?;
+    let guards = tracing_init::init(args.verbose, &cfg)?;
     color_eyre::install()?;
-    log_telemetry_config(&cfg);
+    log_telemetry_config(&guards);
 
     info!("Starting Keystone...");
     let startup_timer = Instant::now();
@@ -185,6 +182,7 @@ pub async fn run() -> Result<(), Report> {
     shutdown::await_listeners(handles).await;
     startup.token.cancel();
     shutdown::await_audit_writer(startup.audit_writer.take(), &startup.cfg).await;
+    guards.shutdown().await;
     Ok(())
 }
 
