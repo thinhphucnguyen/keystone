@@ -15,7 +15,8 @@
 //! Prometheus text exposition (v0.0.4) of the SDK's collected metrics.
 //!
 //! Naming is explicit, as ADR 0031 and `deploy/prometheus/alert_rules.yaml`
-//! expect: monotonic sums are `counter`s named `<name>_total`, non-monotonic
+//! expect: names are exactly the instrument names; monotonic sums are
+//! `counter`s, non-monotonic
 //! sums and gauges are `gauge`s, histograms expose `_bucket`/`_sum`/`_count`
 //! with cumulative buckets. Labels are sorted by name;
 //! families are ordered by name and series by their rendered text, so the
@@ -123,7 +124,7 @@ fn add_data<T: Number>(
     match data {
         MetricData::Sum(sum) => {
             let (name, kind) = if sum.is_monotonic() {
-                (counter_name(metric.name()), Kind::Counter)
+                (metric.name().to_string(), Kind::Counter)
             } else {
                 (metric.name().to_string(), Kind::Gauge)
             };
@@ -197,16 +198,6 @@ fn family<'a>(
         kind,
         series: Vec::new(),
     })
-}
-
-/// Instruments are registered without the `_total` suffix (OpenTelemetry
-/// naming); the exposition adds it back unless it is already there.
-fn counter_name(name: &str) -> String {
-    if name.ends_with("_total") {
-        name.to_string()
-    } else {
-        format!("{name}_total")
-    }
 }
 
 /// One exposition sample line for a plain sum or gauge point.
@@ -301,11 +292,5 @@ mod tests {
     fn label_values_and_help_are_escaped() {
         assert_eq!(escape_label_value("a\"b\\c\nd"), "a\\\"b\\\\c\\nd");
         assert_eq!(escape_help("a\\b\nc"), "a\\\\b\\nc");
-    }
-
-    #[test]
-    fn counter_suffix_is_not_doubled() {
-        assert_eq!(counter_name("keystone_x"), "keystone_x_total");
-        assert_eq!(counter_name("keystone_x_total"), "keystone_x_total");
     }
 }

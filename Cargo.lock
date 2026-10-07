@@ -1066,6 +1066,7 @@ dependencies = [
  "hmac 0.13.0",
  "nix 0.31.3",
  "openstack-keystone-metrics",
+ "openstack-keystone-telemetry",
  "rcgen",
  "rustls",
  "rustls-native-certs",

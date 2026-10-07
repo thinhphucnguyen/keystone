@@ -33,6 +33,8 @@
 mod encoder;
 mod pipeline;
 
+use std::borrow::Cow;
+
 use opentelemetry::metrics::{Counter, Gauge, Histogram, UpDownCounter};
 use opentelemetry::{Key, KeyValue, StringValue, Value};
 
@@ -108,8 +110,8 @@ fn attributes<const N: usize>(names: &[&'static str; N], values: [Label<'_>; N])
     std::array::from_fn(|i| KeyValue::new(Key::from_static_str(names[i]), values[i].value()))
 }
 
-/// A monotonic counter with `N` labels, exposed as `<name>` (which should end
-/// in `_total`).
+/// A monotonic counter with `N` labels, exposed under exactly `name` (which
+/// should end in `_total`).
 #[derive(Clone, Debug)]
 pub struct CounterVec<const N: usize> {
     names: [&'static str; N],
@@ -117,19 +119,16 @@ pub struct CounterVec<const N: usize> {
 }
 
 impl<const N: usize> CounterVec<N> {
-    /// `name` is the exposed series name, ending in `_total`.
+    /// `name` is the exposed series name, ending in `_total` by convention.
     pub fn new(
         meter: &Meter,
         name: &'static str,
         help: &'static str,
         label_names: [&'static str; N],
     ) -> Self {
-        // OpenTelemetry names counters without the suffix; the Prometheus
-        // exposition adds it back.
-        let instrument = name.strip_suffix("_total").unwrap_or(name);
         Self {
             names: label_names,
-            inner: meter.u64_counter(instrument).with_description(help).build(),
+            inner: meter.u64_counter(name).with_description(help).build(),
         }
     }
 
@@ -236,6 +235,48 @@ impl<const N: usize> HistogramVec<N> {
     pub fn record(&self, value: f64, labels: [Label<'_>; N]) {
         self.inner.record(value, &attributes(&self.names, labels));
     }
+}
+
+/// Register a counter whose value is read when metrics are collected, for
+/// totals a subsystem already keeps (an atomic) and that must not be counted a
+/// second time. `read` returns every series as `(label values, total)`; a
+/// series it leaves out is not exposed. `name` is the exposed name.
+pub fn observe_counter<const N: usize>(
+    meter: &Meter,
+    name: impl Into<Cow<'static, str>>,
+    help: impl Into<Cow<'static, str>>,
+    label_names: [&'static str; N],
+    read: impl Fn() -> Vec<([&'static str; N], u64)> + Send + Sync + 'static,
+) {
+    let _ = meter
+        .u64_observable_counter(name)
+        .with_description(help)
+        .with_callback(move |observer| {
+            for (values, total) in read() {
+                observer.observe(total, &attributes(&label_names, values.map(Label::fixed)));
+            }
+        })
+        .build();
+}
+
+/// Register a gauge whose value is read when metrics are collected (a queue
+/// depth, a size kept elsewhere). See [`observe_counter`].
+pub fn observe_gauge<const N: usize>(
+    meter: &Meter,
+    name: impl Into<Cow<'static, str>>,
+    help: impl Into<Cow<'static, str>>,
+    label_names: [&'static str; N],
+    read: impl Fn() -> Vec<([&'static str; N], u64)> + Send + Sync + 'static,
+) {
+    let _ = meter
+        .u64_observable_gauge(name)
+        .with_description(help)
+        .with_callback(move |observer| {
+            for (values, value) in read() {
+                observer.observe(value, &attributes(&label_names, values.map(Label::fixed)));
+            }
+        })
+        .build();
 }
 
 #[cfg(test)]

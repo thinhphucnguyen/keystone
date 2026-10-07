@@ -238,7 +238,7 @@ mod tests {
         let pipeline = MetricsPipeline::new();
         let meter = pipeline.meter();
         let counter = meter
-            .u64_counter("keystone_test_requests")
+            .u64_counter("keystone_test_requests_total")
             .with_description("Requests.")
             .build();
         counter.add(2, &[KeyValue::new("kind", "b")]);
@@ -288,7 +288,10 @@ keystone_test_requests_total{kind=\"b\"} 2
     #[test]
     fn repeated_scrapes_are_cumulative() {
         let pipeline = MetricsPipeline::new();
-        let counter = pipeline.meter().u64_counter("keystone_test_n").build();
+        let counter = pipeline
+            .meter()
+            .u64_counter("keystone_test_n_total")
+            .build();
         counter.add(1, &[]);
         assert!(pipeline.render().contains("keystone_test_n_total 1\n"));
         counter.add(1, &[]);

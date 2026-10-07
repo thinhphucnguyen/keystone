@@ -156,8 +156,9 @@ label values, never an owned `String`.
 
 `/metrics` is rendered from the same `MeterProvider` as the OTLP export, by a
 small in-tree encoder with explicit series naming (`_total` for counters,
-`_bucket`/`_sum`/`_count` for histograms; instruments are registered without
-the `_total` suffix and the encoder adds it). The SDK's pull reader
+`_bucket`/`_sum`/`_count` for histograms; an instrument is registered under
+exactly the name it exposes, `_total` included, so counters that predate the
+convention keep their name). The SDK's pull reader
 (`ManualReader`) is behind an experimental cargo feature in the version used,
 so it is not used. The provider has one stable `PeriodicReader` whose exporter
 renders the Prometheus text into a snapshot on every collection and forwards

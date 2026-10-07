@@ -18,7 +18,17 @@ use http_body_util::BodyExt as _;
 use tower::ServiceExt as _;
 
 use super::*;
+use crate::server::startup::audit::AUDIT_SERVICE;
 use crate::server::startup::test_support::{test_config, test_state};
+use openstack_keystone_core::keystone::ServiceState;
+
+/// An isolated SDK pipeline with the state's audit dispatcher registered, as
+/// `audit::init` does on the process-wide one.
+fn audit_pipeline(state: &ServiceState) -> Arc<MetricsPipeline> {
+    let pipeline = Arc::new(MetricsPipeline::new());
+    cadf::metrics::register(&state.audit_dispatcher, &pipeline.meter(), &AUDIT_SERVICE);
+    pipeline
+}
 
 #[tokio::test]
 async fn metrics_handler_includes_http_metrics_when_enabled() {
@@ -35,9 +45,11 @@ async fn metrics_handler_includes_http_metrics_when_enabled() {
         std::time::Duration::from_millis(1),
     );
 
+    let pipeline = audit_pipeline(&state);
     let app = Router::new()
         .route("/metrics", axum::routing::get(metrics_handler))
         .layer(Extension(http_metrics))
+        .layer(Extension(pipeline))
         .with_state(state);
 
     let response = app
@@ -66,8 +78,10 @@ async fn metrics_handler_omits_http_metrics_when_disabled() {
 
     // No `Extension<Arc<HttpMetrics>>` layered at all, matching what
     // `spawn_metrics` does when the flag is off.
+    let pipeline = audit_pipeline(&state);
     let app = Router::new()
         .route("/metrics", axum::routing::get(metrics_handler))
+        .layer(Extension(pipeline))
         .with_state(state);
 
     let response = app
@@ -96,11 +110,6 @@ async fn metrics_endpoint_golden() {
     let mut cfg = test_config(tmp.path().to_path_buf());
     cfg.interface_metrics.http_requests_enabled = true;
     let state = test_state(cfg).await;
-    state
-        .auth_plugin_load_failures
-        .write()
-        .await
-        .insert("geoip".to_string(), 1);
 
     let http_metrics = Arc::new(HttpMetrics::new());
     http_metrics.record_request(
@@ -110,9 +119,12 @@ async fn metrics_endpoint_golden() {
         std::time::Duration::from_millis(1),
     );
 
+    let pipeline = audit_pipeline(&state);
+    crate::auth_plugin_startup::LoadFailureMetrics::new(&pipeline.meter()).record("geoip");
     let app = Router::new()
         .route("/metrics", axum::routing::get(metrics_handler))
         .layer(Extension(http_metrics))
+        .layer(Extension(pipeline))
         .with_state(state);
 
     let response = app
