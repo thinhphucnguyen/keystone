@@ -124,6 +124,9 @@ pub struct OtelConfig {
     /// `openstack.domain_id` to request spans. Off by default: spans leave
     /// the host.
     pub include_user_ids: Option<bool>,
+    /// Add `client.address` (the caller's IP) to request spans. Off by
+    /// default: it is personal data and spans leave the host.
+    pub include_client_address: Option<bool>,
     /// Also emit the pre-stable `http.method`, `http.url` and
     /// `http.status_code` attribute names `oslo.middleware` uses.
     pub legacy_http_attributes: Option<bool>,
@@ -245,6 +248,8 @@ pub struct TelemetrySettings {
     pub metrics_interval: Duration,
     /// Add user, project and domain ids to request spans.
     pub include_user_ids: bool,
+    /// Add the caller's IP to request spans.
+    pub include_client_address: bool,
     /// Also emit the pre-stable HTTP attribute names.
     pub legacy_http_attributes: bool,
     /// Echo `traceparent` in responses.
@@ -405,6 +410,7 @@ pub fn resolve(
         span_level: otel.span_level.unwrap_or_default(),
         metrics_interval,
         include_user_ids: otel.include_user_ids.unwrap_or(false),
+        include_client_address: otel.include_client_address.unwrap_or(false),
         legacy_http_attributes: otel.legacy_http_attributes.unwrap_or(false),
         response_traceparent: otel.response_traceparent.unwrap_or(false),
     });
@@ -484,7 +490,7 @@ mod tests {
         assert_eq!(s.sampling_rate, 1.0);
         assert_eq!(s.timeout, Duration::from_secs(10));
         assert_eq!(s.metrics_interval, Duration::from_secs(60));
-        assert!(!s.insecure && !s.include_user_ids);
+        assert!(!s.insecure && !s.include_user_ids && !s.include_client_address);
         assert!(!s.legacy_http_attributes && !s.response_traceparent);
         assert!(s.headers.is_empty() && s.resource_attributes.is_empty());
     }
@@ -667,6 +673,15 @@ mod tests {
             "{}",
         );
         assert!(r.warnings.is_empty());
+    }
+
+    #[test]
+    fn client_address_is_opt_in() {
+        let s = resolved(r#"{"enabled": true, "include_client_address": true}"#, "{}")
+            .settings
+            .unwrap();
+        assert!(s.include_client_address);
+        assert!(!s.include_user_ids, "independent of include_user_ids");
     }
 
     #[test]

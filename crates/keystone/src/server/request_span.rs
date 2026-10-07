@@ -25,14 +25,18 @@
 //! Only the route template (`http.route`, the Axum `MatchedPath`) identifies
 //! the endpoint by default. The raw path embeds resource ids and the
 //! authenticated user, project and domain are ids too, so those are added only
-//! with `[otel] include_user_ids`.
+//! with `[otel] include_user_ids`; the caller's IP only with
+//! `[otel] include_client_address`. Operators who export them can strip what
+//! they do not want in the collector.
 //!
 //! The middleware is installed only when traces are being exported; without
 //! it the request path is untouched.
 
 use std::sync::Arc;
 
-use axum::extract::{MatchedPath, Request, State};
+use std::net::SocketAddr;
+
+use axum::extract::{ConnectInfo, MatchedPath, Request, State};
 use axum::http::{Method, header};
 use axum::middleware::Next;
 use axum::response::Response;
@@ -52,6 +56,8 @@ const MAX_USER_AGENT_CHARS: usize = 256;
 pub struct RequestSpanOptions {
     /// Add the raw path and the authenticated user, project and domain ids.
     pub include_user_ids: bool,
+    /// Add the caller's IP address as `client.address`.
+    pub include_client_address: bool,
     /// Also emit the pre-stable `http.method`, `http.user_agent`,
     /// `http.status_code` and `http.url` names `oslo.middleware` uses.
     pub legacy_http_attributes: bool,
@@ -63,6 +69,7 @@ impl From<&TelemetrySettings> for RequestSpanOptions {
     fn from(settings: &TelemetrySettings) -> Self {
         Self {
             include_user_ids: settings.include_user_ids,
+            include_client_address: settings.include_client_address,
             legacy_http_attributes: settings.legacy_http_attributes,
             response_traceparent: settings.response_traceparent,
         }
@@ -118,6 +125,7 @@ macro_rules! server_span {
             otel.status_description = Empty,
             http.request.method = $method,
             http.route = Empty,
+            client.address = Empty,
             http.response.status_code = Empty,
             user_agent.original = Empty,
             openstack.request_id = Empty,
@@ -184,6 +192,13 @@ pub async fn server_span(
         .and_then(|v| v.to_str().ok())
     {
         span.record("openstack.request_id", request_id);
+    }
+    if options.include_client_address
+        // The peer address, or the proxy-resolved client address when
+        // `enable_proxy_headers_parsing` rewrote it; absent on the admin UDS.
+        && let Some(ConnectInfo(addr)) = req.extensions().get::<ConnectInfo<SocketAddr>>()
+    {
+        span.record("client.address", addr.ip().to_string().as_str());
     }
     if options.legacy_http_attributes {
         span.record("http.method", method);
@@ -430,6 +445,50 @@ mod tests {
         assert_eq!(fields["url.path"], "/v3/who");
     }
 
+    fn req_from(addr: &str) -> Request<Body> {
+        let mut req = get_req("/v3/any");
+        req.extensions_mut()
+            .insert(ConnectInfo(addr.parse::<SocketAddr>().unwrap()));
+        req
+    }
+
+    #[tokio::test]
+    async fn the_client_address_is_off_by_default() {
+        let fields = run(req_from("203.0.113.9:51234")).await;
+        assert!(!fields.contains_key("client.address"), "{fields:?}");
+        assert!(fields.values().all(|v| !v.contains("203.0.113.9")));
+    }
+
+    #[tokio::test]
+    async fn the_client_address_is_recorded_when_opted_in_and_has_no_port() {
+        let (_, fields) = run_with(
+            RequestSpanOptions {
+                include_client_address: true,
+                ..Default::default()
+            },
+            req_from("203.0.113.9:51234"),
+        )
+        .await;
+        assert_eq!(fields["client.address"], "203.0.113.9");
+        // Independent of the id switch.
+        assert!(!fields.contains_key("url.path"));
+        assert!(!fields.contains_key("openstack.user_id"));
+    }
+
+    #[tokio::test]
+    async fn no_peer_address_means_no_attribute() {
+        // The admin Unix socket has no `ConnectInfo<SocketAddr>`.
+        let (_, fields) = run_with(
+            RequestSpanOptions {
+                include_client_address: true,
+                ..Default::default()
+            },
+            get_req("/v3/any"),
+        )
+        .await;
+        assert!(!fields.contains_key("client.address"));
+    }
+
     #[tokio::test]
     async fn legacy_attribute_names_are_opt_in() {
         let req = Request::builder()
@@ -483,7 +542,8 @@ mod tests {
     fn options_follow_the_telemetry_settings() {
         use openstack_keystone_telemetry::{OsloMiddlewareTracingConfig, OtelConfig, resolve};
         let otel: OtelConfig = serde_json::from_value(serde_json::json!({
-            "enabled": true, "include_user_ids": true, "response_traceparent": true
+            "enabled": true, "include_user_ids": true, "response_traceparent": true,
+            "include_client_address": true
         }))
         .unwrap();
         let settings = resolve(&otel, &OsloMiddlewareTracingConfig::default())
@@ -492,6 +552,7 @@ mod tests {
             .unwrap();
         let options = RequestSpanOptions::from(&settings);
         assert!(options.include_user_ids && options.response_traceparent);
+        assert!(options.include_client_address);
         assert!(!options.legacy_http_attributes);
     }
 

@@ -66,6 +66,7 @@ A native `[otel]` section, registered through the section registry (ADR 0039):
 `insecure`, `service_name` (default `keystone`), `resource_attributes`,
 `sampler`, `sampling_rate`, `span_level`, `metrics_interval`,
 `include_user_ids` (default `false`; also gates the raw `url.path`),
+`include_client_address` (default `false`),
 `legacy_http_attributes` and `response_traceparent`.
 
 `insecure` follows `oslo.middleware`: it applies to gRPC only (connect without
@@ -113,6 +114,9 @@ inside `TraceLayer`, installed only while traces are exported:
   headers;
 - with `legacy_http_attributes` it also carries `http.method`,
   `http.user_agent` and `http.status_code`, the names `oslo.middleware` uses;
+- with `include_client_address` it carries `client.address`, the caller's IP
+  without the port (the proxy-resolved address when proxy header parsing is
+  on; nothing on the admin Unix socket);
 - with `include_user_ids` it additionally carries the raw `url.path` (resource
   ids are in it), and `openstack.user_id`, `openstack.project_id` and
   `openstack.domain_id`, recorded where the request authenticates. Without the
