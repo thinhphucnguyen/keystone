@@ -32,9 +32,6 @@ keystone_audit_spool_write_failures_total 0
 # HELP keystone_auth_plugin_load_failure Cumulative count of dynamic auth plugin load failures (missing file, checksum mismatch, compile error), labeled by plugin_name - ADR 0025 section 5. A load failure disables only that plugin; every other auth method still starts normally.
 # TYPE keystone_auth_plugin_load_failure counter
 keystone_auth_plugin_load_failure{plugin_name="geoip"} 1
-# HELP keystone_http_requests_total Total HTTP requests by method, route, and status.
-# TYPE keystone_http_requests_total counter
-keystone_http_requests_total{method="GET",route="/v3/probe",status="200"} 1
 # HELP keystone_http_request_duration_seconds HTTP request latency by method and route.
 # TYPE keystone_http_request_duration_seconds histogram
 keystone_http_request_duration_seconds_bucket{method="GET",route="/v3/probe",le="0.001"} 1
@@ -53,7 +50,10 @@ keystone_http_request_duration_seconds_sum{method="GET",route="/v3/probe"} 0.001
 keystone_http_request_duration_seconds_count{method="GET",route="/v3/probe"} 1
 # HELP keystone_http_requests_in_flight In-flight HTTP requests by listener interface.
 # TYPE keystone_http_requests_in_flight gauge
-keystone_http_requests_in_flight{interface="public"} 0
-keystone_http_requests_in_flight{interface="internal"} 0
 keystone_http_requests_in_flight{interface="admin"} 0
+keystone_http_requests_in_flight{interface="internal"} 0
 keystone_http_requests_in_flight{interface="metrics"} 0
+keystone_http_requests_in_flight{interface="public"} 0
+# HELP keystone_http_requests_total Total HTTP requests by method, route, and status.
+# TYPE keystone_http_requests_total counter
+keystone_http_requests_total{method="GET",route="/v3/probe",status="200"} 1

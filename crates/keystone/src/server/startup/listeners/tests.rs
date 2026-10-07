@@ -37,7 +37,8 @@ async fn metrics_handler_includes_http_metrics_when_enabled() {
     cfg.interface_metrics.http_requests_enabled = true;
     let state = test_state(cfg).await;
 
-    let http_metrics = Arc::new(HttpMetrics::new());
+    let pipeline = audit_pipeline(&state);
+    let http_metrics = HttpMetrics::new(&pipeline.meter());
     http_metrics.record_request(
         &axum::http::Method::GET,
         "/v3/probe",
@@ -45,10 +46,8 @@ async fn metrics_handler_includes_http_metrics_when_enabled() {
         std::time::Duration::from_millis(1),
     );
 
-    let pipeline = audit_pipeline(&state);
     let app = Router::new()
         .route("/metrics", axum::routing::get(metrics_handler))
-        .layer(Extension(http_metrics))
         .layer(Extension(pipeline))
         .with_state(state);
 
@@ -76,8 +75,8 @@ async fn metrics_handler_omits_http_metrics_when_disabled() {
     cfg.interface_metrics.http_requests_enabled = false;
     let state = test_state(cfg).await;
 
-    // No `Extension<Arc<HttpMetrics>>` layered at all, matching what
-    // `spawn_metrics` does when the flag is off.
+    // No `HttpMetrics` created at all, matching what `attach_http_metrics`
+    // does when the flag is off.
     let pipeline = audit_pipeline(&state);
     let app = Router::new()
         .route("/metrics", axum::routing::get(metrics_handler))
@@ -111,7 +110,9 @@ async fn metrics_endpoint_golden() {
     cfg.interface_metrics.http_requests_enabled = true;
     let state = test_state(cfg).await;
 
-    let http_metrics = Arc::new(HttpMetrics::new());
+    let pipeline = audit_pipeline(&state);
+    crate::auth_plugin_startup::LoadFailureMetrics::new(&pipeline.meter()).record("geoip");
+    let http_metrics = HttpMetrics::new(&pipeline.meter());
     http_metrics.record_request(
         &axum::http::Method::GET,
         "/v3/probe",
@@ -119,11 +120,8 @@ async fn metrics_endpoint_golden() {
         std::time::Duration::from_millis(1),
     );
 
-    let pipeline = audit_pipeline(&state);
-    crate::auth_plugin_startup::LoadFailureMetrics::new(&pipeline.meter()).record("geoip");
     let app = Router::new()
         .route("/metrics", axum::routing::get(metrics_handler))
-        .layer(Extension(http_metrics))
         .layer(Extension(pipeline))
         .with_state(state);
 

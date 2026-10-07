@@ -31,7 +31,6 @@ use tracing::{error, info};
 use super::{Startup, router};
 use crate::api;
 use crate::config::{Interface, ListenerConfig};
-use crate::server::http_metrics::format_prometheus_text as format_http_metrics_text;
 use crate::server::http_metrics::{HttpMetrics, record_http_metrics};
 use crate::server::listener::{spiffe_tls, spiffe_tls_uds};
 use openstack_keystone_telemetry::metrics::MetricsPipeline;
@@ -216,14 +215,12 @@ pub fn spawn_admin(startup: &Startup, app: Router, handles: &mut JoinSet<()>) {
 }
 
 /// Prometheus scrape endpoint — returns the series on the OpenTelemetry SDK
-/// (audit, auth, token, policy, the ADR 0025 plugin load failures ... ADR
-/// 0040) and (when enabled) the HTTP request metrics in text exposition format (v0.0.4). No
-/// authentication required; operators firewall this port.
+/// (audit, auth, token, policy, HTTP requests when enabled, ... ADR 0040) in
+/// text exposition format (v0.0.4). No authentication required; operators firewall this port.
 ///
 /// The SDK series come from the process-wide pipeline unless a
 /// [`MetricsPipeline`] extension is present (tests).
 pub async fn metrics_handler(
-    http_metrics: Option<Extension<Arc<HttpMetrics>>>,
     pipeline: Option<Extension<Arc<MetricsPipeline>>>,
 ) -> impl IntoResponse {
     // The SDK collects synchronously; keep it off the async workers.
@@ -232,16 +229,13 @@ pub async fn metrics_handler(
         None => openstack_keystone_telemetry::metrics::render_prometheus(),
     })
     .await;
-    let mut body = match collected {
+    let body = match collected {
         Ok(text) => text,
         Err(err) => {
             error!("collecting SDK metrics failed: {err}");
             String::new()
         }
     };
-    if let Some(Extension(http_metrics)) = http_metrics {
-        body.push_str(&format_http_metrics_text(&http_metrics));
-    }
     (
         StatusCode::OK,
         [(
