@@ -487,6 +487,17 @@ pub async fn init_storage(config_manager: &Arc<ConfigManager>) -> Result<Arc<Sto
     )
     .await?;
 
+    // ADR 0031 / 0040 metrics: the Raft gauges read the live openraft
+    // metrics on every collection; the audit spool exposes its atomics.
+    {
+        let meter = openstack_keystone_telemetry::metrics::meter();
+        let metrics_rx = raft.metrics();
+        crate::prometheus_metrics::register_gauges(&meter, ds_config.node_id, move || {
+            metrics_rx.borrow_watched().clone()
+        });
+        audit_forwarder.register_metrics(&meter);
+    }
+
     // Refuse to start if our node_id is already in the cluster under a
     // different address.
     let rpc_addr = ds_config.node_cluster_addr.to_string();
@@ -1341,24 +1352,6 @@ impl Storage {
     /// Return the current Raft leader node id, if elected.
     pub fn current_leader(&self) -> Option<u64> {
         self.raft.metrics().borrow_watched().current_leader
-    }
-
-    /// Renders this node's `keystone_raft_*` Prometheus metrics (ADR 0031)
-    /// in text-exposition format: reads through to the live `openraft`
-    /// metrics snapshot for the gauges (`is_leader`, `term`,
-    /// `last_log_index`, `last_applied_index`, `replication_lag`) and
-    /// includes the incrementally-recorded `apply_duration_seconds`
-    /// histogram. `borrow_watched()` is a cheap, non-blocking watch-channel
-    /// read, so this is safe to call on every `/metrics` scrape.
-    pub fn format_raft_prometheus_metrics(&self) -> String {
-        let metrics_rx = self.raft.metrics();
-        let live = metrics_rx.borrow_watched();
-        let mut out = self
-            .state_machine_store
-            .raft_prometheus_metrics()
-            .format_prometheus_text(&live, self.node_id);
-        out.push_str(&self.audit_forwarder.format_prometheus_text());
-        out
     }
 
     /// Enumerate current Raft membership peers (excluding self) from the

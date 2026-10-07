@@ -5412,6 +5412,7 @@ dependencies = [
  "openstack-keystone-storage-crypto",
  "openstack-keystone-storage-crypto-pkcs11",
  "openstack-keystone-storage-crypto-tpm",
+ "openstack-keystone-telemetry",
  "oslo-config",
  "prost",
  "rand 0.10.2",

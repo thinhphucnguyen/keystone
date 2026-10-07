@@ -237,24 +237,25 @@ impl<const N: usize> HistogramVec<N> {
     }
 }
 
+/// Receives the series of one observation: label values and the value.
+pub type Emit<'e, const N: usize> = &'e dyn Fn([Label<'_>; N], u64);
+
 /// Register a counter whose value is read when metrics are collected, for
 /// totals a subsystem already keeps (an atomic) and that must not be counted a
-/// second time. `read` returns every series as `(label values, total)`; a
-/// series it leaves out is not exposed. `name` is the exposed name.
+/// second time. `read` calls `emit` once per series; a series it leaves out is
+/// not exposed. `name` is the exposed name.
 pub fn observe_counter<const N: usize>(
     meter: &Meter,
     name: impl Into<Cow<'static, str>>,
     help: impl Into<Cow<'static, str>>,
     label_names: [&'static str; N],
-    read: impl Fn() -> Vec<([&'static str; N], u64)> + Send + Sync + 'static,
+    read: impl Fn(Emit<'_, N>) + Send + Sync + 'static,
 ) {
     let _ = meter
         .u64_observable_counter(name)
         .with_description(help)
         .with_callback(move |observer| {
-            for (values, total) in read() {
-                observer.observe(total, &attributes(&label_names, values.map(Label::fixed)));
-            }
+            read(&|values, total| observer.observe(total, &attributes(&label_names, values)));
         })
         .build();
 }
@@ -266,15 +267,13 @@ pub fn observe_gauge<const N: usize>(
     name: impl Into<Cow<'static, str>>,
     help: impl Into<Cow<'static, str>>,
     label_names: [&'static str; N],
-    read: impl Fn() -> Vec<([&'static str; N], u64)> + Send + Sync + 'static,
+    read: impl Fn(Emit<'_, N>) + Send + Sync + 'static,
 ) {
     let _ = meter
         .u64_observable_gauge(name)
         .with_description(help)
         .with_callback(move |observer| {
-            for (values, value) in read() {
-                observer.observe(value, &attributes(&label_names, values.map(Label::fixed)));
-            }
+            read(&|values, value| observer.observe(value, &attributes(&label_names, values)));
         })
         .build();
 }

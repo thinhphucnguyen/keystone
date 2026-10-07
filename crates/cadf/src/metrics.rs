@@ -26,7 +26,7 @@ use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 
-use openstack_keystone_telemetry::metrics::{Meter, observe_counter, observe_gauge};
+use openstack_keystone_telemetry::metrics::{Emit, Meter, observe_counter, observe_gauge};
 
 use crate::{AuditDispatcher, ServiceIdentity};
 
@@ -87,12 +87,11 @@ impl ResultCounter {
         self.index(result).map_or(0, |i| self.counts[i].get())
     }
 
-    /// The series to expose: every touched value with its total.
-    fn series(&self) -> Vec<([&'static str; 1], u64)> {
-        (0..2)
-            .filter(|i| self.touched[*i].load(Ordering::Relaxed))
-            .map(|i| ([self.labels[i]], self.counts[i].get()))
-            .collect()
+    /// Emit every touched value with its total.
+    fn emit(&self, emit: Emit<'_, 1>) {
+        for i in (0..2).filter(|i| self.touched[*i].load(Ordering::Relaxed)) {
+            emit([self.labels[i].into()], self.counts[i].get());
+        }
     }
 }
 
@@ -161,13 +160,13 @@ impl fmt::Debug for AuditMetrics {
 pub fn register(dispatcher: &Arc<AuditDispatcher>, meter: &Meter, service: &ServiceIdentity) {
     let dropped_name = service.metric_name("dropped_total");
     let weak = Arc::downgrade(dispatcher);
-    // A reader of one dispatcher value, `None` once the dispatcher is gone.
+    // A reader of one dispatcher value, nothing once the dispatcher is gone.
     let from_dispatcher = |read: fn(&AuditDispatcher) -> u64| {
         let weak: Weak<AuditDispatcher> = weak.clone();
-        move || {
-            weak.upgrade()
-                .map(|d| vec![([], read(&d))])
-                .unwrap_or_default()
+        move |emit: Emit<'_, 0>| {
+            if let Some(d) = weak.upgrade() {
+                emit([], read(&d));
+            }
         }
     };
 
@@ -202,17 +201,12 @@ pub fn register(dispatcher: &Arc<AuditDispatcher>, meter: &Meter, service: &Serv
         service.metric_name("channel_depth"),
         "Audit events queued in a channel, waiting for the spool writer.",
         ["channel"],
-        move || {
-            channels
-                .upgrade()
-                .map(|d| {
-                    let (perimeter, critical) = d.channel_depths();
-                    vec![
-                        (["perimeter"], perimeter as u64),
-                        (["critical"], critical as u64),
-                    ]
-                })
-                .unwrap_or_default()
+        move |emit| {
+            if let Some(d) = channels.upgrade() {
+                let (perimeter, critical) = d.channel_depths();
+                emit(["perimeter".into()], perimeter as u64);
+                emit(["critical".into()], critical as u64);
+            }
         },
     );
     observe_gauge(
@@ -234,8 +228,8 @@ pub fn register(dispatcher: &Arc<AuditDispatcher>, meter: &Meter, service: &Serv
     let m = Arc::clone(dispatcher.metrics());
     let counter = |name: &str, help: &'static str, read: fn(&AuditMetrics) -> u64| {
         let m = Arc::clone(&m);
-        observe_counter(meter, service.metric_name(name), help, [], move || {
-            vec![([], read(&m))]
+        observe_counter(meter, service.metric_name(name), help, [], move |emit| {
+            emit([], read(&m))
         });
     };
     counter(
@@ -264,7 +258,7 @@ pub fn register(dispatcher: &Arc<AuditDispatcher>, meter: &Meter, service: &Serv
         service.metric_name("spool_verified_total"),
         "Lines checked when a sealed spool segment was verified at startup.",
         ["result"],
-        move || verified.spool_verified.series(),
+        move |emit| verified.spool_verified.emit(emit),
     );
     let shipped = Arc::clone(&m);
     observe_counter(
@@ -272,7 +266,7 @@ pub fn register(dispatcher: &Arc<AuditDispatcher>, meter: &Meter, service: &Serv
         service.metric_name("shipped_events_total"),
         "Events handed to the audit sink; result=skipped counts unparsable spool lines.",
         ["result"],
-        move || shipped.shipped_events.series(),
+        move |emit| shipped.shipped_events.emit(emit),
     );
 }
 
