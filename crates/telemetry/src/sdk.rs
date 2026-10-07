@@ -362,7 +362,8 @@ mod grpc {
     }
 }
 
-#[cfg(all(test, feature = "otlp-http"))]
+#[cfg(test)]
+#[cfg(feature = "otlp-http")]
 mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -567,7 +568,8 @@ mod tests {
     }
 }
 
-#[cfg(all(test, feature = "otlp-grpc"))]
+#[cfg(test)]
+#[cfg(feature = "otlp-grpc")]
 mod grpc_tests {
     use super::*;
     use crate::config::{OsloMiddlewareTracingConfig, OtelConfig, resolve};

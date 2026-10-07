@@ -324,7 +324,8 @@ fn build_file_appender(
     })
 }
 
-#[cfg(all(test, feature = "otel"))]
+#[cfg(test)]
+#[cfg(feature = "otel")]
 mod tests {
     use std::sync::Arc;
     use std::sync::Mutex;
