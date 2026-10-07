@@ -80,6 +80,18 @@ impl Guards {
     }
 }
 
+/// Whether the OpenTelemetry layer may see this callsite.
+///
+/// Spans only: an event inside a span becomes an OTel span event carrying all
+/// its fields, which would ship log lines (the access log's raw URI, error
+/// bodies) off the host. Events stay in the log sinks. The `request` span is
+/// the log-only span `TraceLayer` makes, with `client.addr` and the raw `uri`
+/// as fields that the exporter would send; `http.server` replaces it.
+#[cfg(feature = "otel")]
+fn exportable(meta: &tracing::Metadata<'_>) -> bool {
+    meta.is_span() && meta.name() != "request"
+}
+
 /// Most verbose span level the OTLP layer admits.
 #[cfg(feature = "otel")]
 fn span_level_filter(level: SpanLevel) -> LevelFilter {
@@ -214,12 +226,7 @@ pub fn init(verbose: u8, cfg: &crate::config::LoadedConfig) -> Result<Guards> {
             layer
                 .with_filter(
                     deps_targets(span_level_filter(settings.span_level), LevelFilter::ERROR)
-                        // `request` is the log-only span `TraceLayer` makes: it
-                        // carries `client.addr` and the raw `uri` as fields,
-                        // which would be exported. `http.server` replaces it.
-                        .and(filter_fn(|meta| {
-                            !(meta.is_span() && meta.name() == "request")
-                        })),
+                        .and(filter_fn(exportable)),
                 )
                 .boxed(),
         );
@@ -315,4 +322,84 @@ fn build_file_appender(
         );
         tracing_appender::rolling::never(log_dir, "keystone.log")
     })
+}
+
+#[cfg(all(test, feature = "otel"))]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use tracing_subscriber::layer::{Context, SubscriberExt as _};
+    use tracing_subscriber::{Layer, Registry};
+
+    use super::*;
+
+    /// Records what reaches it.
+    #[derive(Clone, Default)]
+    struct Seen {
+        events: Arc<AtomicUsize>,
+        spans: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl<S> Layer<S> for Seen
+    where
+        S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+    {
+        fn on_new_span(
+            &self,
+            attrs: &tracing::span::Attributes<'_>,
+            _: &tracing::span::Id,
+            _: Context<'_, S>,
+        ) {
+            self.spans
+                .lock()
+                .unwrap()
+                .push(attrs.metadata().name().to_string());
+        }
+
+        fn on_event(&self, _: &tracing::Event<'_>, _: Context<'_, S>) {
+            self.events.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn only_spans_other_than_the_log_only_request_span_are_exported() {
+        let exported = Seen::default();
+        let logged = Seen::default();
+        let subscriber = Registry::default()
+            .with(exported.clone().with_filter(
+                deps_targets(LevelFilter::INFO, LevelFilter::ERROR).and(filter_fn(exportable)),
+            ))
+            .with(
+                logged
+                    .clone()
+                    .with_filter(log_targets(LevelFilter::INFO, LevelFilter::ERROR)),
+            );
+        tracing::subscriber::with_default(subscriber, || {
+            let request = tracing::info_span!("request", uri = "/v3/users/secret");
+            let _request = request.enter();
+            let server = tracing::info_span!(target: SERVER_SPAN_TARGET, "http.server");
+            let _server = server.enter();
+            let driver = tracing::info_span!("driver_call");
+            let _driver = driver.enter();
+            tracing::info!(http_uri = "/v3/users/secret", "finished processing request");
+            tracing::error!("something failed");
+        });
+
+        // `http.server` and the driver span are exported; the `request` span
+        // and every event are not.
+        assert_eq!(
+            *exported.spans.lock().unwrap(),
+            vec!["http.server".to_string(), "driver_call".to_string()]
+        );
+        assert_eq!(exported.events.load(Ordering::Relaxed), 0);
+        // The log sinks keep the events and the `request` span, but not the
+        // export-only span.
+        assert_eq!(logged.events.load(Ordering::Relaxed), 2);
+        assert_eq!(
+            *logged.spans.lock().unwrap(),
+            vec!["request".to_string(), "driver_call".to_string()]
+        );
+    }
 }

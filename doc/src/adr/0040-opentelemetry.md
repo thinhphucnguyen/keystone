@@ -125,6 +125,11 @@ inside `TraceLayer`, installed only while traces are exported:
 `x-openstack-request-id` (ADR 0023 section 2.1), so there is no trusted global
 id to report.
 
+Only spans are exported, never events. The exporter turns an event inside a
+span into a span event with all of its fields, which would ship log lines (the
+access log carries the raw URI, error logs carry error bodies) off the host.
+Events stay in the log sinks.
+
 The `x-request-id` layer and the `access_log` ordering are unchanged.
 
 Trace context is untrusted client input. A malformed `traceparent` is ignored.
