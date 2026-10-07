@@ -30,6 +30,8 @@
 
 pub mod config;
 #[cfg(feature = "sdk")]
+mod propagation;
+#[cfg(feature = "sdk")]
 mod sdk;
 
 pub use config::{
@@ -37,6 +39,8 @@ pub use config::{
     TelemetryConfigError, TelemetrySettings, resolve,
 };
 
+#[cfg(feature = "sdk")]
+pub use propagation::{inject_traceparent, set_remote_parent};
 #[cfg(feature = "sdk")]
 pub use sdk::{TelemetryGuard, TelemetryInitError, TelemetryShutdownError, init};
 

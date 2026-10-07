@@ -24,13 +24,13 @@ otlp-http = [
 ]
 otlp-grpc = [
   "sdk",
-  "dep:http",
   "opentelemetry-otlp/grpc-tonic",
   "opentelemetry-otlp/tls-aws-lc",
   "opentelemetry-otlp/tls-webpki-roots",
 ]
 # Internal: the SDK, the tracing bridge and the signal features.
 sdk = [
+  "dep:http",
   "dep:opentelemetry",
   "dep:opentelemetry-otlp",
   "dep:opentelemetry_sdk",
@@ -59,6 +59,7 @@ tracing-subscriber = { workspace = true, optional = true }
 url.workspace = true
 
 [dev-dependencies]
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
 eyre.workspace = true
 openstack-keystone-config.workspace = true
 serde_json.workspace = true

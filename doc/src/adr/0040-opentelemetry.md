@@ -65,8 +65,8 @@ A native `[otel]` section, registered through the section registry (ADR 0039):
 `endpoint`, `protocol` (`http/protobuf` or `grpc`), `headers`, `timeout`,
 `insecure`, `service_name` (default `keystone`), `resource_attributes`,
 `sampler`, `sampling_rate`, `span_level`, `metrics_interval`,
-`include_user_ids` (default `false`), `legacy_http_attributes` and
-`response_traceparent`.
+`include_user_ids` (default `false`; also gates the raw `url.path`),
+`legacy_http_attributes` and `response_traceparent`.
 
 `insecure` follows `oslo.middleware`: it applies to gRPC only (connect without
 TLS) and is ignored, with a warning, for HTTP, where the URL scheme decides.
@@ -92,28 +92,48 @@ logged. The alias drives traces only, as in `oslo.middleware`. osprofiler
 
 ### Traces
 
-A `tracing-opentelemetry` layer is added to the registry with its own `Targets`
-filter (the `deps_targets` pinning applies to spans too). A custom `MakeSpan` on
-`TraceLayer`:
+A `tracing-opentelemetry` layer is added to the registry with its own filter:
+the `deps_targets` pinning applies to spans too, plus the `span_level` cut-off.
 
-- extracts `traceparent`/`tracestate` as the remote parent;
-- names spans `HTTP {method} {route}` where `route` is the Axum `MatchedPath`
-  template (the oslo middleware uses the raw path, which is unbounded);
-- sets the stable HTTP semantic-convention attributes, and the legacy
-  `http.method`/`http.url`/`http.status_code` names behind an option;
-- sets `openstack.request_id` and `openstack.global_request_id`;
-- sets `openstack.user_id`, `openstack.project_id` and `openstack.domain_id`
-  only when `include_user_ids` is true;
-- marks 5xx responses as errors.
+`TraceLayer` keeps making the `request` span for the local logs. It has
+`client.addr` and the raw `uri` as fields, and the exporter sends every field
+of a span it sees, so that span is excluded from export (and the new span is
+excluded from the log sinks, where it would only add noise to the span
+context). Export gets a dedicated `http.server` span from a small middleware
+inside `TraceLayer`, installed only while traces are exported:
 
-Echoing `traceparent` in responses is optional and off by default. The
-`x-request-id` layer and the `access_log` ordering are unchanged; the access log
-gains the trace id.
+- it is named `{method} {route}` with `route` the Axum `MatchedPath` template
+  (the oslo middleware uses the raw path, which is unbounded), or just the
+  method when no route matched;
+- it carries `http.request.method` (a standard method or `_OTHER`),
+  `http.route`, `http.response.status_code`, `user_agent.original` (cut to 256
+  characters) and `openstack.request_id`, and is marked as an error for 5xx
+  responses only;
+- the remote parent comes from the `traceparent` and `tracestate` request
+  headers;
+- with `legacy_http_attributes` it also carries `http.method`,
+  `http.user_agent` and `http.status_code`, the names `oslo.middleware` uses;
+- with `include_user_ids` it additionally carries the raw `url.path` (resource
+  ids are in it), and `openstack.user_id`, `openstack.project_id` and
+  `openstack.domain_id`, recorded where the request authenticates. Without the
+  option those fields are not declared on the span, so nothing can record
+  into them;
+- `response_traceparent` echoes the span's `traceparent` in the response, off
+  by default.
 
-Trace context is untrusted client input. It may select the trace id and the
-parent sampling decision; it must never influence authorization (security-model
-invariants). `#[instrument]` sites on authentication, token, credential, EC2 and
-trust paths must `skip` secrets, because spans now leave the host.
+`openstack.global_request_id` is not set: Keystone strips a client-supplied
+`x-openstack-request-id` (ADR 0023 section 2.1), so there is no trusted global
+id to report.
+
+The `x-request-id` layer and the `access_log` ordering are unchanged.
+
+Trace context is untrusted client input. A malformed `traceparent` is ignored.
+A valid one chooses the trace id and, under the default `parent_based_ratio`
+sampler, the sampling decision, so a client can ask for its own requests to be
+sampled. Operators who do not want that use the `ratio` sampler. Trace context
+never influences authorization (security-model invariants).
+`#[instrument]` sites on authentication, token, credential, EC2 and trust
+paths must `skip` secrets, because spans now leave the host.
 
 ### Metrics
 

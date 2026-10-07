@@ -33,7 +33,12 @@ only; where an option is set in both sections `[otel]` wins and a warning is
 logged at startup. `protocol` is `http/protobuf` (default, endpoint
 `http://localhost:4318`) or `grpc` (`http://localhost:4317`). `headers` and
 `resource_attributes` are comma separated `name=value` lists; `headers` may
-carry credentials and is never logged. `include_user_ids` is `false` by default because spans leave the host.
+carry credentials and is never logged. Request spans are named after the route template (for example
+`GET /v3/users/{user_id}`). `include_user_ids` is `false` by default because
+spans leave the host: it gates the authenticated user, project and domain ids
+and the raw request path, which contains resource ids. `response_traceparent`
+echoes the trace context in responses, and `legacy_http_attributes` adds the
+`http.method` family of names that `oslo.middleware` emits.
 `insecure` applies to `grpc` only, as in `oslo.middleware`. `span_level`
 (default `info`) is the most verbose span exported. A malformed value fails
 startup even while telemetry is disabled.

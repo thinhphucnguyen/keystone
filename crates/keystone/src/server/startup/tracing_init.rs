@@ -30,6 +30,10 @@ use tracing_subscriber::{
 #[cfg(feature = "otel")]
 use openstack_keystone_telemetry::SpanLevel;
 use openstack_keystone_telemetry::{OsloMiddlewareTracingConfig, OtelConfig, Resolved, resolve};
+#[cfg(feature = "otel")]
+use tracing_subscriber::filter::{FilterExt as _, filter_fn};
+
+use crate::server::request_span::SERVER_SPAN_TARGET;
 
 /// The running OTLP pipeline; uninhabited when the `otel` feature is off.
 #[cfg(feature = "otel")]
@@ -110,6 +114,12 @@ fn deps_targets(default: LevelFilter, deps: LevelFilter) -> Targets {
         .with_target("hyper_util", LevelFilter::ERROR)
 }
 
+/// [`deps_targets`] for the log sinks: the OpenTelemetry `http.server` span is
+/// export-only and would only add noise to the log lines' span context.
+fn log_targets(default: LevelFilter, deps: LevelFilter) -> Targets {
+    deps_targets(default, deps).with_target(SERVER_SPAN_TARGET, LevelFilter::OFF)
+}
+
 /// Initialize the tracing subscriber registry (stderr, optionally a native
 /// systemd journal writer, and optionally a rotating file appender) based on
 /// CLI verbosity and the loaded config.
@@ -148,7 +158,7 @@ pub fn init(verbose: u8, cfg: &crate::config::LoadedConfig) -> Result<Guards> {
         log_layers.push(
             tracing_subscriber::fmt::layer()
                 .with_writer(io::stderr)
-                .with_filter(deps_targets(stderr_default, stderr_deps))
+                .with_filter(log_targets(stderr_default, stderr_deps))
                 .boxed(),
         );
     }
@@ -158,7 +168,7 @@ pub fn init(verbose: u8, cfg: &crate::config::LoadedConfig) -> Result<Guards> {
             Ok(journald_layer) => {
                 log_layers.push(
                     journald_layer
-                        .with_filter(deps_targets(file_level, file_level))
+                        .with_filter(log_targets(file_level, file_level))
                         .boxed(),
                 );
             }
@@ -187,7 +197,7 @@ pub fn init(verbose: u8, cfg: &crate::config::LoadedConfig) -> Result<Guards> {
             tracing_subscriber::fmt::layer()
                 .with_ansi(false) // no colors in the log file
                 .with_writer(non_blocking)
-                .with_filter(deps_targets(file_level, file_level))
+                .with_filter(log_targets(file_level, file_level))
                 .boxed(),
         );
     }
@@ -202,10 +212,15 @@ pub fn init(verbose: u8, cfg: &crate::config::LoadedConfig) -> Result<Guards> {
         // process (see `[otel] span_level`); driver DEBUG spans stay local.
         log_layers.push(
             layer
-                .with_filter(deps_targets(
-                    span_level_filter(settings.span_level),
-                    LevelFilter::ERROR,
-                ))
+                .with_filter(
+                    deps_targets(span_level_filter(settings.span_level), LevelFilter::ERROR)
+                        // `request` is the log-only span `TraceLayer` makes: it
+                        // carries `client.addr` and the raw `uri` as fields,
+                        // which would be exported. `http.server` replaces it.
+                        .and(filter_fn(|meta| {
+                            !(meta.is_span() && meta.name() == "request")
+                        })),
+                )
                 .boxed(),
         );
     }
