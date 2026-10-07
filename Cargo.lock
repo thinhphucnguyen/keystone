@@ -5310,6 +5310,7 @@ dependencies = [
  "openstack-keystone-local-emergency-store",
  "openstack-keystone-metrics",
  "openstack-keystone-storage-api",
+ "openstack-keystone-telemetry",
  "oslo-config",
  "p256 0.14.0",
  "percent-encoding",

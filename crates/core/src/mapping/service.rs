@@ -1274,14 +1274,8 @@ impl MappingApi for MappingService {
     ) -> Result<AuthenticationResult, MappingProviderError> {
         let result = self.authenticate_by_mapping_internal(exec, req).await;
         if let IdentitySource::Federation { idp_id } = &req.source {
-            let outcome = if result.is_ok() {
-                crate::federation::metrics::OUTCOME_SUCCESS
-            } else {
-                crate::federation::metrics::OUTCOME_FAILURE
-            };
             crate::federation::metrics::FEDERATION_METRICS
-                .authentications_total
-                .inc([idp_id.as_str(), outcome]);
+                .record_authentication(idp_id.as_str(), result.is_ok());
         }
         result
     }

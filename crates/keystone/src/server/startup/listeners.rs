@@ -217,8 +217,9 @@ pub fn spawn_admin(startup: &Startup, app: Router, handles: &mut JoinSet<()>) {
 }
 
 /// Prometheus scrape endpoint — returns the audit counters, the ADR 0025
-/// `keystone_auth_plugin_load_failure{plugin_name}` counter, and (when
-/// enabled) the HTTP request metrics in text exposition format (v0.0.4). No
+/// `keystone_auth_plugin_load_failure{plugin_name}` counter, the series of the
+/// subsystems already on the OpenTelemetry SDK (ADR 0040) and (when enabled)
+/// the HTTP request metrics in text exposition format (v0.0.4). No
 /// authentication required; operators firewall this port.
 pub async fn metrics_handler(
     State(state): State<ServiceState>,
@@ -231,6 +232,13 @@ pub async fn metrics_handler(
     body.push_str(&crate::auth_plugin_startup::format_load_failure_metrics(
         &*state.auth_plugin_load_failures.read().await,
     ));
+    // The SDK collects synchronously; keep it off the async workers.
+    match tokio::task::spawn_blocking(openstack_keystone_telemetry::metrics::render_prometheus)
+        .await
+    {
+        Ok(text) => body.push_str(&text),
+        Err(err) => error!("collecting SDK metrics failed: {err}"),
+    }
     if let Some(Extension(http_metrics)) = http_metrics {
         body.push_str(&format_http_metrics_text(&http_metrics));
     }

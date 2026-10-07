@@ -34,6 +34,7 @@ openstack-keystone-key-repository.workspace = true
 openstack-keystone-local-emergency-store.workspace = true
 openstack-keystone-metrics.workspace = true
 openstack-keystone-storage-api.workspace = true
+openstack-keystone-telemetry.workspace = true
 jsonwebtoken.workspace = true
 mockall = { workspace = true, optional = true }
 p256 = { version = "0.14", features = ["ecdsa", "pkcs8"] }

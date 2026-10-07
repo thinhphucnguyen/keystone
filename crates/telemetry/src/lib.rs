@@ -29,6 +29,7 @@
 //! build without the feature still rejects a malformed section.
 
 pub mod config;
+pub mod metrics;
 #[cfg(feature = "sdk")]
 mod propagation;
 #[cfg(feature = "sdk")]

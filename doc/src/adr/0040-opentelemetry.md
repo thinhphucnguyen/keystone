@@ -154,12 +154,28 @@ callers pass `&str`). It stays type-level: `openstack-keystone-telemetry`
 provides typed attribute helpers that accept only `&'static str` or enum-backed
 label values, never an owned `String`.
 
-`/metrics` is served from a pull reader registered on the same `MeterProvider`
-as the OTLP periodic reader, rendered by a small in-tree encoder with explicit
-series naming (`_total` for counters, `_bucket`/`_sum`/`_count` for histograms).
-`deploy/prometheus/alert_rules.yaml` and ADR 0031 names are preserved, enforced
-by a golden test captured from the current implementation before the migration.
-A third-party Prometheus bridge crate is not used.
+`/metrics` is rendered from the same `MeterProvider` as the OTLP export, by a
+small in-tree encoder with explicit series naming (`_total` for counters,
+`_bucket`/`_sum`/`_count` for histograms; instruments are registered without
+the `_total` suffix and the encoder adds it). The SDK's pull reader
+(`ManualReader`) is behind an experimental cargo feature in the version used,
+so it is not used. The provider has one stable `PeriodicReader` whose exporter
+renders the Prometheus text into a snapshot on every collection and forwards
+the data to the OTLP exporter when one is configured. A scrape forces a
+collection and reads the snapshot; forced collections are not forwarded, so
+scraping causes no extra OTLP requests.
+`deploy/prometheus/alert_rules.yaml` and ADR 0031 names are preserved,
+enforced by a golden test captured from the current implementation before the
+migration. A third-party Prometheus bridge crate is not used.
+
+The metrics SDK (not the OTLP exporters) is a regular dependency of
+`openstack-keystone-telemetry`, so `/metrics` works in every build and there is
+one code path. The pipeline is process-wide and created pull-only on first use;
+OTLP push needs it to be created by telemetry init, so instruments must not be
+used before init. Differences from the hand-rolled primitives: a series exists
+only after it was first recorded (a series that must read zero is recorded
+with `add(0, ..)`), and a bounded label whose value is chosen at run time
+(`idp_id`) is passed through `Label::bounded`, which marks it for review.
 
 Operators scrape `/metrics` or push OTLP, not both for the same series, or a
 collector that re-exposes Prometheus double counts.
@@ -241,9 +257,8 @@ Reading:
   golden test replace them.
 - New dependencies (`opentelemetry`, `opentelemetry_sdk`, an OTLP exporter,
   `tracing-opentelemetry`) behind the `otel` feature. The default build is
-  unchanged until the metrics migration step, after which `/metrics` depends on
-  the SDK and so on the feature; a build without `otel` keeps a minimal
-  in-process path, to be settled in step 5.
+  unchanged except that the metrics SDK, without any exporter, is always
+  compiled in: `/metrics` is served from it in every build.
 - The bounded-label rule moves from a type-level check in one crate to typed
   helpers in another; reviewers still check that label sources are bounded.
 - ADR 0031's "continue hand-rolled exposition" decision is superseded; its
