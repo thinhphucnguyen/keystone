@@ -204,15 +204,20 @@ they are follow-up work, not a blocker.
 5. Metrics, part 1: typed wrappers, the pull reader and encoder, `/metrics` on
    the SDK with one subsystem migrated.
 6. Metrics, part 2: remaining subsystems, grouped by crate.
-7. Remove `openstack-keystone-metrics`; re-run the golden test and benchmark.
+7. Remove `openstack-keystone-metrics`; re-run the golden tests. The golden
+   helper moved to `openstack-keystone-telemetry` (`golden` feature), and the
+   benchmark keeps only the span cases, since the comparison needs the removed
+   crate.
 8. Operator documentation, including migration from
    `[oslo_middleware_tracing]` and a collector example.
 
 ## Benchmark
 
-`tests/otel-bench` (standalone crate, `cargo bench` inside it) compares the
-current primitives with SDK synchronous instruments, and measures the cost of
-the OTel span layer. Run on a shared 4-vCPU cloud VM, criterion, 3 s
+`tests/otel-bench` (standalone crate, `cargo bench` inside it) measured the
+hand-rolled primitives against SDK synchronous instruments before the decision,
+and measures the cost of the OTel span layer. The instrument comparison needs
+`openstack-keystone-metrics`, so it can only be re-run from the commits before
+that crate was removed; the numbers below are the recorded result. Run on a shared 4-vCPU cloud VM, criterion, 3 s
 measurement per case, single run. Treat as indicative: the VM is noisy and the
 contended cases in particular vary between runs. Versions: `opentelemetry` and
 `opentelemetry_sdk` 0.33, `tracing-opentelemetry` 0.34.

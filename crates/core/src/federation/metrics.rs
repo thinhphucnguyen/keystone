@@ -83,7 +83,7 @@ mod tests {
         metrics.record_authentication("idp-okta", true);
         metrics.record_authentication("idp-okta", false);
         metrics.record_authentication("idp-azure", true);
-        openstack_keystone_metrics::assert_golden!("federation", pipeline.render());
+        openstack_keystone_telemetry::assert_golden!("federation", pipeline.render());
     }
 
     #[test]

@@ -293,7 +293,7 @@ mod tests {
         metrics
             .plugin_invocations_total
             .inc(["geoip".into(), "failure".into()]);
-        openstack_keystone_metrics::assert_golden!("auth", pipeline.render());
+        openstack_keystone_telemetry::assert_golden!("auth", pipeline.render());
     }
 
     #[test]

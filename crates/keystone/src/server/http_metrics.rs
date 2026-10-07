@@ -307,7 +307,7 @@ mod tests {
         m.inc_in_flight(Interface::Public);
         m.inc_in_flight(Interface::Public);
         m.inc_in_flight(Interface::Admin);
-        openstack_keystone_metrics::assert_golden!("http", pipeline.render());
+        openstack_keystone_telemetry::assert_golden!("http", pipeline.render());
     }
 
     #[test]

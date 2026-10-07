@@ -132,7 +132,7 @@ mod tests {
         metrics.record("geoip");
         metrics.record("geoip");
         metrics.record("a\"b\\c");
-        openstack_keystone_metrics::assert_golden!("auth_plugin_load_failure", pipeline.render());
+        openstack_keystone_telemetry::assert_golden!("auth_plugin_load_failure", pipeline.render());
     }
 
     struct UnreachableHttpFetcher;

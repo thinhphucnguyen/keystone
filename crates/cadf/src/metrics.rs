@@ -309,7 +309,7 @@ mod tests {
     #[test]
     fn golden_exposition() {
         let dispatcher = AuditDispatcher::noop();
-        openstack_keystone_metrics::assert_golden!("audit", render(&dispatcher, &SERVICE));
+        openstack_keystone_telemetry::assert_golden!("audit", render(&dispatcher, &SERVICE));
     }
 
     #[test]

@@ -182,7 +182,7 @@ mod tests {
         metrics.record("http", &forbidden(), Duration::from_millis(300));
         metrics.decisions_total.inc(["error".into()]);
         metrics.errors_total.inc(["http".into()]);
-        openstack_keystone_metrics::assert_golden!("policy", pipeline.render());
+        openstack_keystone_telemetry::assert_golden!("policy", pipeline.render());
     }
 
     fn allowed() -> Result<PolicyEvaluationResult, PolicyError> {

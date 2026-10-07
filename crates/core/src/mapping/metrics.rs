@@ -88,7 +88,7 @@ mod tests {
         metrics.record_evaluation(OUTCOME_MATCHED, 0.002);
         metrics.record_evaluation(OUTCOME_NO_MATCH, 0.7);
         metrics.evaluations_total.inc([OUTCOME_ERROR.into()]);
-        openstack_keystone_metrics::assert_golden!("mapping", pipeline.render());
+        openstack_keystone_telemetry::assert_golden!("mapping", pipeline.render());
     }
 
     #[test]

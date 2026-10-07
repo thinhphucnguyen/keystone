@@ -135,7 +135,7 @@ mod tests {
         metrics.record(SCOPE_PER_IP, true);
         metrics.record(SCOPE_PER_IP, false);
         metrics.record(SCOPE_PER_USER, true);
-        openstack_keystone_metrics::assert_golden!("rate_limit", pipeline.render());
+        openstack_keystone_telemetry::assert_golden!("rate_limit", pipeline.render());
     }
 
     #[test]

@@ -178,7 +178,7 @@ mod tests {
         metrics.record("token", true);
         metrics.record("token", false);
         metrics.record("user", false);
-        openstack_keystone_metrics::assert_golden!("request_cache", pipeline.render());
+        openstack_keystone_telemetry::assert_golden!("request_cache", pipeline.render());
     }
 
     /// Value of the series starting with `series` in the process-wide

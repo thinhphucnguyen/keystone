@@ -141,5 +141,5 @@ async fn metrics_endpoint_golden() {
     );
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let text = String::from_utf8(body.to_vec()).unwrap();
-    openstack_keystone_metrics::assert_golden!("metrics_endpoint", text);
+    openstack_keystone_telemetry::assert_golden!("metrics_endpoint", text);
 }

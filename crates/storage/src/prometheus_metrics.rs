@@ -194,7 +194,7 @@ mod tests {
     fn golden_exposition() {
         let replication = BTreeMap::from([(2u64, Some(90u64)), (3u64, None)]);
         let live = metrics_fixture(1, Some(1), 7, Some(100), Some(95), Some(replication));
-        openstack_keystone_metrics::assert_golden!("raft", render(live, 1, &[0.002, 0.2]));
+        openstack_keystone_telemetry::assert_golden!("raft", render(live, 1, &[0.002, 0.2]));
     }
 
     #[test]

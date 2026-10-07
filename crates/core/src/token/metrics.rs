@@ -217,7 +217,7 @@ mod tests {
             .inc(["fernet".into(), "failure".into()]);
         metrics.record_revoked("user_request");
         metrics.set_revocation_list_size(7);
-        openstack_keystone_metrics::assert_golden!("token", pipeline.render());
+        openstack_keystone_telemetry::assert_golden!("token", pipeline.render());
     }
 
     use openstack_keystone_core_types::application_credential::ApplicationCredentialBuilder;
