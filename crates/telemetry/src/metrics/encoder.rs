@@ -17,8 +17,9 @@
 //! Naming is explicit, as ADR 0031 and `deploy/prometheus/alert_rules.yaml`
 //! expect: monotonic sums are `counter`s named `<name>_total`, non-monotonic
 //! sums and gauges are `gauge`s, histograms expose `_bucket`/`_sum`/`_count`
-//! with cumulative buckets. Families are ordered by name and series by their
-//! rendered labels, so the output is stable.
+//! with cumulative buckets. Labels are sorted by name;
+//! families are ordered by name and series by their rendered text, so the
+//! output is stable.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -146,33 +147,33 @@ fn add_data<T: Number>(
             let name = metric.name().to_string();
             let family = family(families, name.clone(), metric, Kind::Histogram);
             for point in histogram.data_points() {
-                let labels = sorted_labels(point.attributes());
+                let series_labels = labels(point.attributes());
                 let mut block = String::new();
                 let mut cumulative = 0u64;
                 for (bound, count) in point.bounds().zip(point.bucket_counts()) {
                     cumulative += count;
                     block.push_str(&line(
                         &format!("{name}_bucket"),
-                        &labels,
+                        &series_labels,
                         Some(&float(bound)),
                         &cumulative.to_string(),
                     ));
                 }
                 block.push_str(&line(
                     &format!("{name}_bucket"),
-                    &labels,
+                    &series_labels,
                     Some("+Inf"),
                     &point.count().to_string(),
                 ));
                 block.push_str(&line(
                     &format!("{name}_sum"),
-                    &labels,
+                    &series_labels,
                     None,
                     &float(point.sum().as_f64()),
                 ));
                 block.push_str(&line(
                     &format!("{name}_count"),
-                    &labels,
+                    &series_labels,
                     None,
                     &point.count().to_string(),
                 ));
@@ -210,11 +211,12 @@ fn counter_name(name: &str) -> String {
 
 /// One exposition sample line for a plain sum or gauge point.
 fn sample<'a>(name: &str, attributes: impl Iterator<Item = &'a KeyValue>, value: &str) -> String {
-    line(name, &sorted_labels(attributes), None, value)
+    line(name, &labels(attributes), None, value)
 }
 
-/// Labels in key order, values rendered and escaped.
-fn sorted_labels<'a>(attributes: impl Iterator<Item = &'a KeyValue>) -> Vec<(String, String)> {
+/// Labels sorted by name: the SDK does not keep one attribute order per
+/// series, so the exposition fixes it.
+fn labels<'a>(attributes: impl Iterator<Item = &'a KeyValue>) -> Vec<(String, String)> {
     let mut labels: Vec<(String, String)> = attributes
         .map(|kv| (kv.key.as_str().to_string(), kv.value.as_str().to_string()))
         .collect();

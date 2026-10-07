@@ -33,13 +33,19 @@
 mod encoder;
 mod pipeline;
 
-use opentelemetry::metrics::{Counter, Histogram, UpDownCounter};
+use opentelemetry::metrics::{Counter, Gauge, Histogram, UpDownCounter};
 use opentelemetry::{Key, KeyValue, StringValue, Value};
 
 pub use opentelemetry::metrics::Meter;
 pub use pipeline::{AlreadyStarted, MetricsPipeline};
 #[cfg(feature = "sdk")]
 pub(crate) use pipeline::{PushConfig, install};
+
+/// Upper bounds (seconds) of the latency histograms, shared by every
+/// subsystem so dashboards can compare them.
+pub const LATENCY_BUCKETS: [f64; 11] = [
+    0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0,
+];
 
 /// The process-wide meter. Create instruments after telemetry init: an
 /// instrument made earlier would not be exported over OTLP.
@@ -138,15 +144,15 @@ impl<const N: usize> CounterVec<N> {
     }
 }
 
-/// A value that goes up and down (in-flight requests, queue depth), exposed
-/// as a `gauge`.
+/// A value that goes up and down by deltas (in-flight requests), exposed as a
+/// `gauge`.
 #[derive(Clone, Debug)]
-pub struct GaugeVec<const N: usize> {
+pub struct UpDownCounterVec<const N: usize> {
     names: [&'static str; N],
     inner: UpDownCounter<i64>,
 }
 
-impl<const N: usize> GaugeVec<N> {
+impl<const N: usize> UpDownCounterVec<N> {
     /// `name` is the exposed series name.
     pub fn new(
         meter: &Meter,
@@ -167,6 +173,34 @@ impl<const N: usize> GaugeVec<N> {
     /// visible at zero.
     pub fn add(&self, delta: i64, labels: [Label<'_>; N]) {
         self.inner.add(delta, &attributes(&self.names, labels));
+    }
+}
+
+/// A value that is set to the latest reading (a size, a backlog), exposed as
+/// a `gauge`. Nothing is exposed until it is set once.
+#[derive(Clone, Debug)]
+pub struct GaugeVec<const N: usize> {
+    names: [&'static str; N],
+    inner: Gauge<i64>,
+}
+
+impl<const N: usize> GaugeVec<N> {
+    /// `name` is the exposed series name.
+    pub fn new(
+        meter: &Meter,
+        name: &'static str,
+        help: &'static str,
+        label_names: [&'static str; N],
+    ) -> Self {
+        Self {
+            names: label_names,
+            inner: meter.i64_gauge(name).with_description(help).build(),
+        }
+    }
+
+    /// Set the current value.
+    pub fn set(&self, value: i64, labels: [Label<'_>; N]) {
+        self.inner.record(value, &attributes(&self.names, labels));
     }
 }
 
@@ -215,8 +249,9 @@ mod tests {
         let counter = CounterVec::new(&meter, "keystone_t_events_total", "Events.", ["kind"]);
         counter.inc(["a".into()]);
         counter.add(2, [Label::bounded(&String::from("b"))]);
-        let gauge = GaugeVec::new(&meter, "keystone_t_open", "Open.", []);
+        let gauge = UpDownCounterVec::new(&meter, "keystone_t_open", "Open.", []);
         gauge.add(0, []);
+        GaugeVec::new(&meter, "keystone_t_size", "Size.", []).set(7, []);
         let histogram = HistogramVec::new(&meter, "keystone_t_seconds", "Time.", [], &[1.0]);
         histogram.record(0.5, []);
 

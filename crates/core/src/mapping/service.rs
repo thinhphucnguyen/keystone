@@ -232,17 +232,13 @@ impl MappingService {
             ruleset.domain_id.as_deref(),
             req.rule_name.as_deref(),
         );
-        crate::mapping::metrics::MAPPING_METRICS
-            .evaluation_duration_seconds
-            .record(eval_started.elapsed().as_secs_f64());
         let eval_outcome = match &eval_result {
             Ok(Some(_)) => crate::mapping::metrics::OUTCOME_MATCHED,
             Ok(None) => crate::mapping::metrics::OUTCOME_NO_MATCH,
             Err(_) => crate::mapping::metrics::OUTCOME_ERROR,
         };
         crate::mapping::metrics::MAPPING_METRICS
-            .evaluations_total
-            .inc([eval_outcome]);
+            .record_evaluation(eval_outcome, eval_started.elapsed().as_secs_f64());
         let match_result = eval_result?.ok_or(MappingProviderError::NoMatchingRule)?;
 
         // 4. Resolve identity mode: explicit rule value > source-based default
