@@ -19,7 +19,9 @@ allows warning states to remain `200 OK`.
 audit event, drop, queue-depth, spool, sink and key-version series
 (`keystone_audit_*`, listed in ADR 0023 §Observability; ready-made alert rules
 are in `deploy/prometheus/alert_rules.yaml`) and dynamic-auth-plugin load
-failures.
+failures, and HTTP, authentication, policy, token, rate-limit and cache
+series. The same data can be pushed over OTLP; see
+[OpenTelemetry](features/opentelemetry.md).
 
 Keystone uses structured logging. Protect logs because request and identity
 metadata can be sensitive, and never enable logging that records bearer tokens,
