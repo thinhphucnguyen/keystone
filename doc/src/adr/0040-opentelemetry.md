@@ -178,6 +178,15 @@ only after it was first recorded (a series that must read zero is recorded
 with `add(0, ..)`), and a bounded label whose value is chosen at run time
 (`idp_id`) is passed through `Label::bounded`, which marks it for review.
 
+Subsystems that already keep their own state (the audit dispatcher's atomics,
+the live `openraft` metrics) expose it through observable instruments read at
+collection time, so the hot paths do not touch the SDK. The output differs from
+the hand-rolled text in presentation only: label names are sorted, families
+are ordered by name, and a family with no sample yet (the two audit counters
+labelled by `result`) has no `# HELP`/`# TYPE` header. Every series name,
+label and value is unchanged, which the golden files check. The Raft series
+were not served before (the formatter was never called) and now are.
+
 Operators scrape `/metrics` or push OTLP, not both for the same series, or a
 collector that re-exposes Prometheus double counts.
 

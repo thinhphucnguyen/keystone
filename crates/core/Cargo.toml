@@ -32,7 +32,6 @@ openstack-keystone-config.workspace = true
 oslo-config.workspace = true
 openstack-keystone-key-repository.workspace = true
 openstack-keystone-local-emergency-store.workspace = true
-openstack-keystone-metrics.workspace = true
 openstack-keystone-storage-api.workspace = true
 openstack-keystone-telemetry.workspace = true
 jsonwebtoken.workspace = true
