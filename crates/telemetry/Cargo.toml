@@ -1,0 +1,27 @@
+[package]
+name = "openstack-keystone-telemetry"
+description = "OpenTelemetry configuration and setup for Keystone (ADR 0040)"
+version = "0.1.0"
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+inventory.workspace = true
+oslo-config.workspace = true
+secrecy.workspace = true
+serde = { workspace = true, features = ["derive"] }
+thiserror.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+eyre.workspace = true
+openstack-keystone-config.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
+
+[lints]
+workspace = true

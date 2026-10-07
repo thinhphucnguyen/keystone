@@ -28,7 +28,7 @@ use clap::Parser;
 use color_eyre::eyre::{Report, Result};
 use tokio::task::{JoinHandle, JoinSet};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::config::Config;
 use openstack_keystone_core::keystone::ServiceState;
@@ -71,6 +71,42 @@ pub struct Startup {
     pub audit_writer: Option<JoinHandle<()>>,
 }
 
+/// Report the effective `[otel]` / `[oslo_middleware_tracing]` configuration
+/// (ADR 0040) now that the subscriber is installed: alias notes, conflicts
+/// between the two sections, and whether anything is going to be exported.
+///
+/// The OTLP pipeline itself is not built yet, so a configuration that asks
+/// for it is flagged rather than silently ignored.
+fn log_telemetry_config(cfg: &crate::config::LoadedConfig) {
+    use openstack_keystone_telemetry::{OsloMiddlewareTracingConfig, OtelConfig, resolve};
+
+    let view = cfg.view();
+    let (Some(otel), Some(alias)) = (
+        view.section::<OtelConfig>(),
+        view.section::<OsloMiddlewareTracingConfig>(),
+    ) else {
+        return;
+    };
+    // Validated at load time (`OtelConfig::validate_with`), so this only
+    // fails if the sections were swapped out since.
+    match resolve(otel, alias) {
+        Ok(resolved) => {
+            for warning in &resolved.warnings {
+                warn!("telemetry: {warning}");
+            }
+            if let Some(settings) = &resolved.settings {
+                warn!(
+                    traces = settings.traces_enabled,
+                    metrics = settings.metrics_enabled,
+                    "telemetry is enabled in the configuration but this build does not export \
+                     OTLP yet (ADR 0040); nothing will be exported"
+                );
+            }
+        }
+        Err(err) => warn!("telemetry: invalid configuration: {err}"),
+    }
+}
+
 /// Parse CLI arguments, initialize logging, build the service, spawn the
 /// background tasks and listeners, then block until one listener task exits
 /// and tear the rest down.
@@ -90,7 +126,12 @@ pub async fn run() -> Result<(), Report> {
 
     // Catch a driver section whose registration the linker dropped (ADR 0018,
     // ADR 0039) before the configuration is loaded without it.
-    oslo_config::assert_registered(&["jws_tokens", "distributed_storage"])?;
+    oslo_config::assert_registered(&[
+        "jws_tokens",
+        "distributed_storage",
+        "otel",
+        "oslo_middleware_tracing",
+    ])?;
     #[cfg(feature = "openfga")]
     oslo_config::assert_registered(&["openfga"])?;
 
@@ -101,6 +142,7 @@ pub async fn run() -> Result<(), Report> {
     // file-appender logs.
     let _guard = tracing_init::init(args.verbose, &cfg)?;
     color_eyre::install()?;
+    log_telemetry_config(&cfg);
 
     info!("Starting Keystone...");
     let startup_timer = Instant::now();

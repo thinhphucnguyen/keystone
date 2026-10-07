@@ -5013,6 +5013,7 @@ dependencies = [
  "openstack-keystone-role-driver-sql",
  "openstack-keystone-scim-driver-raft",
  "openstack-keystone-storage-api",
+ "openstack-keystone-telemetry",
  "openstack-keystone-token-driver-fernet",
  "openstack-keystone-token-driver-jws",
  "openstack-keystone-token-restriction-driver-sql",
@@ -5858,6 +5859,23 @@ dependencies = [
  "tracing",
  "tss-esapi",
  "zeroize",
+]
+
+[[package]]
+name = "openstack-keystone-telemetry"
+version = "0.1.0"
+dependencies = [
+ "eyre",
+ "inventory",
+ "openstack-keystone-config",
+ "oslo-config",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "url",
 ]
 
 [[package]]
