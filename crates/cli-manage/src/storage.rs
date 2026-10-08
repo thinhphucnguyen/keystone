@@ -30,7 +30,10 @@ use openstack_keystone_distributed_storage::{
     app::{LEADER_ENDPOINT_HEADER, LEADER_ID_HEADER},
     config::{DistributedStorageConfiguration, RaftTlsConfiguration},
     network::{get_client_tls_config, get_spiffe_grpc_channel},
-    protobuf::raft::{MetricsResponse, cluster_admin_service_client::ClusterAdminServiceClient},
+    protobuf::raft::{
+        MetricsResponse, TransferLeaderAdminRequest,
+        cluster_admin_service_client::ClusterAdminServiceClient,
+    },
 };
 
 mod backup;
@@ -48,6 +51,7 @@ mod remove_peer;
 mod restore;
 mod rotate_dek;
 mod status;
+mod transfer_leader;
 
 use crate::PerformAction;
 use crate::storage::backup::BackupCommand;
@@ -65,6 +69,7 @@ use crate::storage::remove_peer::RemovePeerCommand;
 use crate::storage::restore::RestoreCommand;
 use crate::storage::rotate_dek::RotateDekCommand;
 use crate::storage::status::StatusCommand;
+use crate::storage::transfer_leader::TransferLeaderCommand;
 
 /// Distributed storage.
 ///
@@ -93,6 +98,7 @@ impl PerformAction for StorageCommand {
             StorageCommands::Restore(e) => e.take_action(config).await,
             StorageCommands::RotateDek(e) => e.take_action(config).await,
             StorageCommands::Status(e) => e.take_action(config).await,
+            StorageCommands::TransferLeader(e) => e.take_action(config).await,
             StorageCommands::ListDekLocalEmergencyCandidates(e) => e.take_action(config).await,
             StorageCommands::ReconcileDekLocalEmergency(e) => e.take_action(config).await,
         }
@@ -114,6 +120,7 @@ enum StorageCommands {
     Restore(RestoreCommand),
     RotateDek(RotateDekCommand),
     Status(StatusCommand),
+    TransferLeader(TransferLeaderCommand),
     ListDekLocalEmergencyCandidates(ListDekLocalEmergencyCandidatesCommand),
     ReconcileDekLocalEmergency(ReconcileDekLocalEmergencyCommand),
 }
@@ -282,6 +289,54 @@ async fn connect_leader(
         target = Some(node_uri(&leader_addr)?);
     }
     Err(eyre!("the Raft leader kept changing; retry shortly"))
+}
+
+/// Moves leadership away from `node_id` when it is the leader, so a change
+/// that takes it out of the voter set (or a restart of it) does not leave the
+/// cluster without a leader until an election times out.
+///
+/// `remaining` are the voters that stay. Candidates are tried in id order
+/// until one takes over (a lagging one rejects the transfer). Returns the
+/// client and metrics of the new leader; when `node_id` is not the leader
+/// the arguments are returned unchanged.
+async fn step_down_leader(
+    cfg: &LoadedConfig,
+    client: ClusterAdminServiceClient<Channel>,
+    metrics: MetricsResponse,
+    node_id: u64,
+    remaining: &BTreeSet<u64>,
+) -> Result<(ClusterAdminServiceClient<Channel>, MetricsResponse), Report> {
+    if metrics.current_leader != Some(node_id) {
+        return Ok((client, metrics));
+    }
+    let mut client = client;
+    let mut last_err = None;
+    for successor in remaining {
+        match client
+            .transfer_leader(TransferLeaderAdminRequest {
+                node_id: *successor,
+            })
+            .await
+        {
+            Ok(_) => {
+                let addr = metrics
+                    .membership
+                    .as_ref()
+                    .and_then(|m| m.nodes.get(successor))
+                    .map(|n| node_uri(&n.rpc_addr))
+                    .transpose()?;
+                println!("Leadership of node {node_id} transferred to node {successor}.");
+                return connect_leader(cfg, addr).await;
+            }
+            Err(status) => last_err = Some(status),
+        }
+    }
+    Err(match last_err {
+        Some(status) => rpc_error(status).wrap_err(format!(
+            "could not hand leadership over from node {node_id}"
+        )),
+        None => eyre!("node {node_id} is the leader and no other voter could take over"),
+    })
 }
 
 #[cfg(test)]

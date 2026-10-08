@@ -58,6 +58,7 @@ the member to contact as its positional argument.
 | `promote [--cluster-addr] <node-id>`                                                | leader      | Promote a learner to voting member                          |
 | `demote [--cluster-addr] <node-id>`                                                 | leader      | Demote a voter to non-voting learner                        |
 | `remove-peer [--cluster-addr] <node-id>`                                            | leader      | Remove a voter from the cluster membership                  |
+| `transfer-leader [--cluster-addr] [<node-id>]`                                      | leader      | Hand leadership over to another voter                       |
 | `list-peers [--cluster-addr]`                                                       | any node    | Show cluster peers in a table                               |
 | `metrics [--cluster-addr]`                                                          | any node    | Show raw cluster metrics and leader status                  |
 | `status [--cluster-addr]`                                                           | any node    | Show DEK, rotation, quarantine and nonce state of the node  |
@@ -82,9 +83,13 @@ redirect; it prints the leader's address so the operator can first check that
 the leader holds the candidate. (\*) Disaster-recovery `restore` into an
 uninitialized node runs on the given node.
 
-`demote` and `remove-peer` of the current leader make it step down once the
-change commits; leadership transfer is not implemented, so the cluster has no
-leader, and writes fail, until the election timeout elects a new one.
+`demote` and `remove-peer` of the current leader first hand leadership over to
+another voter (the same operation as `transfer-leader`), wait until it leads,
+and then apply the change on the new leader, so writes are not interrupted by
+an election. Run `transfer-leader` before a planned restart of the leader node
+for the same reason. A voter that lags the leader rejects the transfer; the
+command then tries the next voter. The transfer is audited as
+`LEADERSHIP_TRANSFERRED`.
 
 ---
 
@@ -559,7 +564,7 @@ Audited events include: `DEK_ROTATION`, `DEK_ROTATION_EMERGENCY_STAGED`,
 `DEK_ROTATION_EMERGENCY_CONFIRMED`, `DEK_ROTATION_EMERGENCY_ABORTED`,
 `DEK_ROTATION_LOCAL_EMERGENCY_STAGED`,
 `DEK_ROTATION_LOCAL_EMERGENCY_RECONCILED`, `DEK_INSTALLED`,
-`QUARANTINE_CLEARED`, `BACKUP_CREATED`, `BACKUP_RESTORED`, and the `_FAILED`
+`LEADERSHIP_TRANSFERRED`, `QUARANTINE_CLEARED`, `BACKUP_CREATED`, `BACKUP_RESTORED`, and the `_FAILED`
 variants of the Raft-committed operations.
 
 Every restore attempt by an authenticated operator leaves exactly one record:
