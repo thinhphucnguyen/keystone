@@ -54,7 +54,7 @@ the member to contact as its positional argument.
 | Subcommand                                                                          | Target      | Description                                                 |
 | ----------------------------------------------------------------------------------- | ----------- | ----------------------------------------------------------- |
 | `init`                                                                              | local node  | Bootstrap a new single-node cluster                         |
-| `join <cluster-addr>`                                                               | leader      | Join the local node as a Raft learner                       |
+| `join <cluster-addr>`                                                               | leader      | Adopt the cluster DEK, then join the local node as a learner |
 | `promote [--cluster-addr] <node-id>`                                                | leader      | Promote a learner to voting member                          |
 | `demote [--cluster-addr] <node-id>`                                                 | leader      | Demote a voter to non-voting learner                        |
 | `remove-peer [--cluster-addr] <node-id>`                                            | leader      | Remove a voter from the cluster membership                  |
@@ -564,7 +564,7 @@ Audited events include: `DEK_ROTATION`, `DEK_ROTATION_EMERGENCY_STAGED`,
 `DEK_ROTATION_EMERGENCY_CONFIRMED`, `DEK_ROTATION_EMERGENCY_ABORTED`,
 `DEK_ROTATION_LOCAL_EMERGENCY_STAGED`,
 `DEK_ROTATION_LOCAL_EMERGENCY_RECONCILED`, `DEK_INSTALLED`,
-`LEADERSHIP_TRANSFERRED`, `QUARANTINE_CLEARED`, `BACKUP_CREATED`, `BACKUP_RESTORED`, and the `_FAILED`
+`LEADERSHIP_TRANSFERRED`, `CLUSTER_DEK_ADOPTED`, `QUARANTINE_CLEARED`, `BACKUP_CREATED`, `BACKUP_RESTORED`, and the `_FAILED`
 variants of the Raft-committed operations.
 
 Every restore attempt by an authenticated operator leaves exactly one record:
@@ -881,6 +881,13 @@ keystone-manage storage join https://10.0.0.1:8310
 # On node 3's host:
 keystone-manage storage join https://10.0.0.1:8310
 ```
+
+`join` first asks the local node, which must already be running, to fetch the
+cluster's data encryption keys from the leader and install them, and only then
+registers it as a learner. The node therefore never replicates under the DEK it
+generated at first boot. All nodes must share the same KEK material, otherwise
+the adoption fails and the join is aborted. Re-running `join` on a node that is
+already a member is harmless.
 
 **Step 4 — Promote learners to voting members.**
 
