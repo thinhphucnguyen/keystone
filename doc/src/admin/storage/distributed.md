@@ -562,6 +562,16 @@ Audited events include: `DEK_ROTATION`, `DEK_ROTATION_EMERGENCY_STAGED`,
 `QUARANTINE_CLEARED`, `BACKUP_CREATED`, `BACKUP_RESTORED`, and the `_FAILED`
 variants of the Raft-committed operations.
 
+Every restore attempt by an authenticated operator leaves exactly one record:
+`BACKUP_RESTORED` on success, `BACKUP_RESTORED_FAILED` when it is refused,
+aborted (stalled or disconnected upload, size overrun or mismatch), rejected by
+the cluster at apply time, or fails during a disaster recovery install. The
+failure record carries the `mode` (`cluster` or `disaster_recovery`, absent if
+the attempt failed before it was known), `declared_len`, `received_len`, the
+gRPC `code` and the error message in `error`. It never contains backup
+contents or key material. Like the success record it is best effort and does
+not mask the restore error.
+
 ---
 
 ## Quarantine and GCM Failure Handling
